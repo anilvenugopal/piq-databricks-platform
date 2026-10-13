@@ -1,0 +1,21 @@
+# -----------------------------------------------------------------------------
+# sars.yaml - Sensitive Access Roles. Owned by governance (CODEOWNERS).
+# A SAR group is the only exception to the masks it unlocks, in every catalog.
+# members: group references per environment, added by pull request after
+# governance approval:
+#   "consumer:<consumer>:<role>"   a consumer group (prd only)
+#   "<env>:<domain>:<role>"        a domain local role
+# -----------------------------------------------------------------------------
+sars:
+  claimant_pii:
+    description: Unmasked claimant personal data
+    unlocks: [ssn, dob, email, phone, name]
+    members:
+      dev: []
+      prd: []
+  financial_metrics:
+    description: Unmasked sensitive financial metrics
+    unlocks: [financial_amount]
+    members:
+      dev: []
+      prd: ["consumer:exec_reporting:analyst"]

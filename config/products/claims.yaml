@@ -1,0 +1,9 @@
+# Products published by the claims domain. File name = owning domain.
+# Changes here need approval from the claims domain owners (CODEOWNERS).
+products:
+  loss:
+    type: data                         # data | agent | app
+    description: Loss triangles and claim development
+    contract: docs/contracts/loss.md
+    status: published                  # draft | published | deprecated
+    consumers: [profitability]         # domains or consumer domains allowed to read

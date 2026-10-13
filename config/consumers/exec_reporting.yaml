@@ -1,0 +1,9 @@
+# Consumer-only domain: uses products, publishes none. File name = consumer key.
+# Consumer domains exist in prd only. The lead owns the consumer groups in Entra
+# and adds or removes members directly; Terraform never manages their membership.
+description: Executive reporting and board packs
+lead: exec.reporting.lead@example.com    # Entra UPN; becomes owner of the consumer groups
+roles: [analyst, developer]              # piq-prd-exec-reporting-{role}
+prep_catalog: true                       # prd_exec_reporting for staging and shaping
+prep_schemas: [staging, prep, reporting]
+warehouse: { size: 2X-Small, max_clusters: 2, auto_stop_mins: 10 }

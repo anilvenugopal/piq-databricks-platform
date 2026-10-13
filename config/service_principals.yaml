@@ -1,29 +1,16 @@
 # -----------------------------------------------------------------------------
-# service_principals.yaml - non-human identities. Created in Entra (stack 20),
-# synced to Databricks automatically, assigned to workspaces (stack 30).
-# Authentication: GitHub OIDC federated credentials -> no secrets to rotate.
-# The Terraform SP itself (sp-<prefix>-terraform) is created by bootstrap/.
+# service_principals.yaml - EXTRA non-human identities.
+#
+# Generated automatically by modules/naming (do not list them here):
+#   sp-piq-{env}-{domain}-deploy   per producer domain; trusts repo:<org>/<domain repo>:environment:<env>
+#   sp-piq-{env}-vault-loader      trusts repo:<org>/<vault repo>:environment:<env>
+#   sp-piq-terraform               created by bootstrap/
+# member_of uses the persona reference syntax, plus "consumer:<consumer>:<role>".
 # -----------------------------------------------------------------------------
 service_principals:
-  dev-deploy:
-    description: Deploys Asset Bundles to dev; run-as identity for dev jobs
-    member_of: ["dev:*:producer"]
-    workspaces: { dev: USER }
-    github_subjects:                 # repo:<org>/<repo>:environment:<env>
-      - { repo: piq-claims-pipelines,    environment: dev }
-      - { repo: piq-policy-pipelines,    environment: dev }
-      - { repo: piq-insurance-pipelines, environment: dev }
-  prd-deploy:
-    description: Deploys Asset Bundles to prd; the ONLY writer to prd data
-    member_of: ["prd:*:producer"]
-    workspaces: { prd: USER }
-    github_subjects:
-      - { repo: piq-claims-pipelines,    environment: prd }
-      - { repo: piq-policy-pipelines,    environment: prd }
-      - { repo: piq-insurance-pipelines, environment: prd }
   powerbi:
-    description: Power BI scheduled refresh against prd curated layers
-    member_of: ["prd:*:consumer"]
+    description: Power BI scheduled refresh for executive reporting
+    member_of: ["consumer:exec_reporting:analyst"]
     workspaces: { prd: USER }
     github_subjects: []
   monitoring:

@@ -1,16 +1,29 @@
 # Separation of duties, enforced by branch protection ("Require review from Code Owners").
 # Replace the team handles with your own GitHub teams or usernames.
 
-*                                   @your-github-org/platform-team
+*                                        @your-github-org/platform-team
 
-# Governance: tag taxonomy, masking functions, ABAC policies
-/config/governed_tags.yaml          @your-github-org/governance-team
-/sql/governance/                    @your-github-org/governance-team
-/stacks/60-governance/              @your-github-org/governance-team
+# Product publication and consumer approval: the producing domain decides.
+/config/products/claims.yaml             @your-github-org/claims-data-team
+/config/products/policy_financial.yaml   @your-github-org/policy-financial-team
+/config/products/profitability.yaml      @your-github-org/profitability-team
 
-# Access model: who can read what
-/config/access_matrix.yaml          @your-github-org/platform-team @your-github-org/governance-team
-/config/personas.yaml               @your-github-org/platform-team @your-github-org/governance-team
+# Consumer domains: their lead owns the definition.
+/config/consumers/exec_reporting.yaml    @your-github-org/exec-reporting-leads
 
-# Production experiments require explicit approval
-/config/experiments.yaml            @your-github-org/platform-leads
+# Governance: tag taxonomy, masks, sensitive access roles, ABAC policies.
+/config/governed_tags.yaml               @your-github-org/governance-team
+/config/sars.yaml                        @your-github-org/governance-team
+/sql/governance/                         @your-github-org/governance-team
+/stacks/60-governance/                   @your-github-org/governance-team
+
+# Access model and naming: platform and governance together.
+/config/access_matrix.yaml               @your-github-org/platform-team @your-github-org/governance-team
+/config/personas.yaml                    @your-github-org/platform-team @your-github-org/governance-team
+/modules/naming/                         @your-github-org/platform-team @your-github-org/governance-team
+
+# Shared raw vault definition.
+/config/domains.yaml                     @your-github-org/platform-team @your-github-org/vault-team
+
+# Production experiments require explicit approval.
+/config/experiments.yaml                 @your-github-org/platform-leads

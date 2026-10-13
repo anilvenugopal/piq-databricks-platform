@@ -1,0 +1,8 @@
+# Products published by the profitability domain (derived from other products).
+products:
+  loss_ratio:
+    type: data
+    description: Loss ratio by line, state and accident year, from Loss and Earned premium
+    contract: docs/contracts/loss_ratio.md
+    status: published
+    consumers: [exec_reporting]

@@ -1,0 +1,8 @@
+# Products published by the policy financial domain.
+products:
+  earned_premium:
+    type: data
+    description: Earned premium by policy, coverage and period
+    contract: docs/contracts/earned_premium.md
+    status: published
+    consumers: [profitability, exec_reporting]

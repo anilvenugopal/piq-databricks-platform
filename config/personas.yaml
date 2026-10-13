@@ -1,30 +1,28 @@
 # -----------------------------------------------------------------------------
-# personas.yaml - job personas. Each persona is an Entra group nested INTO the
-# functional groups it needs. People join a persona group; access follows.
-#
-# member_of entries:
-#   "<env>:<domain|*>:<role>"  functional group(s); * = every data domain
-#   "<platform-group-key>"     a platform group from platform_groups below
-#
-# members: Entra UPNs. In a real enterprise HR/IdP processes own membership;
-# here the access portal (scripts/provision_access.py) edits these lists via PR.
+# personas.yaml - job personas and platform groups.
+# A persona is an Entra group nested INTO the groups it needs.
+# member_of references:
+#   "<env>:<domain|*>:<role>"   domain local role(s); * = every producer domain
+#   "vault:<env>:engineer"      vault engineer group
+#   "<platform-group-key>"      a platform group below
+# Consumer-domain membership is NOT a persona: consumer leads manage it.
 # -----------------------------------------------------------------------------
 personas:
   data-engineer:
-    description: Builds pipelines in dev, reads prd
+    description: Builds domain pipelines and products in dev, reads prd
     member_of: ["dev:*:producer", "prd:*:analyst", "sandbox-users"]
     members: []
   data-analyst:
-    description: Consumes curated prd data, explores dev
-    member_of: ["prd:*:consumer", "dev:*:analyst", "sandbox-users"]
-    members: []
-  bi-developer:
-    description: Builds dashboards on curated prd data
-    member_of: ["prd:*:consumer", "sandbox-users"]
+    description: Analyses domain data in dev and prd
+    member_of: ["dev:*:analyst", "prd:*:analyst", "sandbox-users"]
     members: []
   ai-engineer:
-    description: Builds agents and models in dev, reads prd curated layers
+    description: Builds agents and models in dev, reads prd
     member_of: ["dev:*:ai", "dev:*:producer", "prd:*:analyst", "sandbox-users"]
+    members: []
+  vault-engineer:
+    description: Builds vault loaders in dev, reads the prd vault
+    member_of: ["vault:dev:engineer", "vault:prd:engineer", "sandbox-users"]
     members: []
   team-lead:
     description: Reviews work across domains
@@ -35,21 +33,21 @@ personas:
     member_of: ["dev-workspace-admins", "prd-workspace-admins", "metastore-admins"]
     members: []
   governance-admin:
-    description: Owns tag taxonomy, masking functions and ABAC policies
-    member_of: ["governance-admins"]
+    description: Owns tag taxonomy, masking functions, ABAC policies and SARs
+    member_of: ["mesh-governance"]
     members: []
   monitoring-admin:
     description: Reads cost, audit and usage telemetry
     member_of: ["platform-monitoring"]
     members: []
 
-# Platform groups (not per domain). workspaces: env -> USER | ADMIN
+# Platform groups. workspaces: env -> USER | ADMIN
 platform_groups:
-  account-admins:        { description: "Break-glass Databricks account admins", workspaces: { dev: ADMIN, prd: ADMIN } }
-  metastore-admins:      { description: "Unity Catalog metastore admins (includes the Terraform SP)", workspaces: { dev: USER, prd: USER } }
-  dev-workspace-admins:  { description: "Workspace admins for dev", workspaces: { dev: ADMIN } }
-  prd-workspace-admins:  { description: "Workspace admins for prd", workspaces: { prd: ADMIN } }
-  governance-admins:     { description: "Tag taxonomy, masking functions, ABAC policies", workspaces: { dev: USER, prd: USER } }
-  platform-monitoring:   { description: "Cost, usage, audit telemetry readers", workspaces: { dev: USER, prd: USER } }
-  sandbox-users:         { description: "Personal sandbox schemas in dev_sandbox", workspaces: { dev: USER } }
-  prd-experimenters:     { description: "Members of approved prd_sandbox experiments", workspaces: { prd: USER } }
+  mesh-admins:          { description: "Platform admins and break-glass account admins", workspaces: { dev: ADMIN, prd: ADMIN } }
+  metastore-admins:     { description: "Unity Catalog metastore admins (includes the Terraform SP)", workspaces: { dev: USER, prd: USER } }
+  dev-workspace-admins: { description: "Workspace admins for dev", workspaces: { dev: ADMIN } }
+  prd-workspace-admins: { description: "Workspace admins for prd", workspaces: { prd: ADMIN } }
+  mesh-governance:      { description: "Tag taxonomy, masks, ABAC policies, SAR approvals; BROWSE on every catalog", workspaces: { dev: USER, prd: USER } }
+  platform-monitoring:  { description: "Cost, usage and audit telemetry readers", workspaces: { dev: USER, prd: USER } }
+  sandbox-users:        { description: "Personal sandbox schemas in dev_sandbox", workspaces: { dev: USER } }
+  prd-experimenters:    { description: "Members of approved prd_sandbox experiments", workspaces: { prd: USER } }

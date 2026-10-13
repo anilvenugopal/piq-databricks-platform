@@ -1,10 +1,11 @@
 # -----------------------------------------------------------------------------
-# test_users.yaml - TRAINING ONLY. Creates Entra users so you can sign in as
-# different personas and prove the access design. Passwords land in Terraform
-# state (sensitive output). Set enabled: false and apply to delete them.
+# test_users.yaml - TRAINING ONLY. Entra users for signing in as each persona.
+# member_of may also name consumer groups, which in real use only the consumer
+# lead would populate. Passwords land in Terraform state (sensitive output).
 # -----------------------------------------------------------------------------
 enabled: true
 users:
-  test.engineer: { display_name: "Test Engineer", persona: data-engineer }
-  test.analyst:  { display_name: "Test Analyst",  persona: data-analyst }
-  test.ai:       { display_name: "Test AI Engineer", persona: ai-engineer }
+  test.engineer:  { display_name: "Test Engineer",    member_of: ["persona:data-engineer"] }
+  test.analyst:   { display_name: "Test Analyst",     member_of: ["persona:data-analyst"] }
+  test.ai:        { display_name: "Test AI Engineer", member_of: ["persona:ai-engineer"] }
+  test.executive: { display_name: "Test Executive",   member_of: ["consumer:exec_reporting:analyst"] }

@@ -7,7 +7,14 @@ workspace configuration, AI/app infrastructure, governance and observability.
 Everything is driven by YAML in `config/`. Adding a domain, a person, a sandbox or
 an experiment is a pull request that edits one file.
 
-> **Status:** written and statically validated, not yet applied to a live account.
+> **Migration in progress (product architecture).** Steps 1–2 are done:
+> `config/`, `modules/naming`, `scripts/validate_config.py`, CODEOWNERS and
+> `tests/naming` implement the product architecture (shared raw vault, product
+> schemas, consumer domains, SARs). The stacks under `stacks/` still reference
+> the previous naming outputs and will not plan until steps 3–4 update them.
+> Run `make test` to check config and naming without cloud access.
+>
+> **Previous status:** written and statically validated, not yet applied to a live account.
 > The six Databricks stacks pass `validate` against the Databricks provider schema
 > (v1.137). The Azure stacks pass `fmt` and were checked argument-by-argument against
 > the azurerm v5 / azuread v3 docs. Expect a few first-run fixes; see

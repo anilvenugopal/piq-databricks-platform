@@ -20,6 +20,8 @@ jobs:
         with: { terraform_version: "1.9.8" }
       - name: Format
         run: terraform fmt -recursive -check
+      - name: Naming module tests
+        run: python3 tests/naming/run_tests.py
       - name: Validate every stack
         run: |
           for d in bootstrap stacks/*/; do
