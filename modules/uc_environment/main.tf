@@ -2,11 +2,12 @@
 # modules/uc_environment - Unity Catalog objects for ONE environment.
 #
 # Called once per environment with that environment's WORKSPACE-level provider.
-# Because catalogs, credentials and external locations are created ISOLATED
-# through that workspace, Unity Catalog binds them to it: a prd catalog is not
-# reachable from the dev workspace, whatever anyone's grants say.
+# Catalogs, credentials and external locations are created ISOLATED through
+# that workspace, so Unity Catalog binds them to it. Catalogs that list
+# readonly_envs (prd_{domain}_anon) also get a READ_ONLY binding to those
+# environments' workspaces.
 #
-# Chain for each catalog:
+# Chain per catalog:
 #   access connector (Azure MI) -> storage credential -> external location
 #   -> catalog managed location -> schemas -> volumes -> grants -> tags
 # =============================================================================
@@ -18,22 +19,20 @@ terraform {
 }
 
 variable "env" { type = string }
-variable "prefix" { type = string }
 variable "workspace_id" { type = string }
+variable "workspace_ids" {
+  description = "env -> workspace id, for read-only bindings into other environments"
+  type        = map(string)
+}
 variable "access_connector_id" { type = string }
 variable "storage_account_name" { type = string }
-variable "catalogs" { type = any }       # filtered to this env
-variable "catalog_grants" { type = any } # catalog key -> list of {principal, privileges}
-variable "schemas" { type = any }        # filtered to this env
-variable "volumes" { type = any }        # filtered to this env
+variable "catalogs" { type = any }       # naming.catalogs filtered to this env
+variable "catalog_grants" { type = any } # naming.catalog_grants (all envs)
+variable "schemas" { type = any }        # naming.schemas filtered to this env
+variable "volumes" { type = any }        # naming.volumes filtered to this env
 
-locals {
-  credential_name = "${var.env}_lake_credential"
-}
-
-# Storage credential: Unity Catalog's handle on the Azure managed identity.
 resource "databricks_storage_credential" "lake" {
-  name    = local.credential_name
+  name    = "${var.env}_lake_credential"
   comment = "Access connector for ${var.env} lake storage. Managed by terraform."
   azure_managed_identity {
     access_connector_id = var.access_connector_id
@@ -42,7 +41,7 @@ resource "databricks_storage_credential" "lake" {
 }
 
 # One external location per catalog container. Nobody but the owner (Terraform)
-# gets privileges here; people reach data only through catalogs.
+# holds privileges on it; people reach data only through catalogs.
 resource "databricks_external_location" "catalog" {
   for_each        = var.catalogs
   name            = "${each.value.name}_root"
@@ -60,19 +59,33 @@ resource "databricks_catalog" "this" {
   isolation_mode = "ISOLATED"
   properties = {
     piq_env    = each.value.env
-    piq_domain = each.value.domain
+    piq_kind   = each.value.kind
+    piq_domain = each.value.owner
     managed_by = "terraform"
   }
 }
 
-# Explicit binding documents intent; ISOLATED catalogs are only usable from
-# workspaces listed in their bindings.
 resource "databricks_workspace_binding" "catalog" {
   for_each       = var.catalogs
   securable_name = databricks_catalog.this[each.key].name
   securable_type = "catalog"
   workspace_id   = var.workspace_id
   binding_type   = "BINDING_TYPE_READ_WRITE"
+}
+
+# Read-only bindings into other environments (anonymized prd data read from dev).
+locals {
+  readonly_bindings = { for item in flatten([
+    for ck, c in var.catalogs : [for e in c.readonly_envs : { key = "${ck}|${e}", catalog_key = ck, env = e }]
+  ]) : item.key => item }
+}
+
+resource "databricks_workspace_binding" "readonly" {
+  for_each       = local.readonly_bindings
+  securable_name = databricks_catalog.this[each.value.catalog_key].name
+  securable_type = "catalog"
+  workspace_id   = var.workspace_ids[each.value.env]
+  binding_type   = "BINDING_TYPE_READ_ONLY"
 }
 
 resource "databricks_grants" "catalog" {
@@ -93,10 +106,7 @@ resource "databricks_schema" "this" {
   catalog_name = databricks_catalog.this[each.value.catalog_key].name
   name         = each.value.name
   comment      = each.value.comment
-  properties = {
-    piq_layer  = each.value.layer
-    managed_by = "terraform"
-  }
+  properties   = merge(each.value.tags, { managed_by = "terraform" })
 }
 
 resource "databricks_grants" "schema" {
@@ -115,37 +125,39 @@ resource "databricks_grants" "schema" {
 resource "databricks_volume" "this" {
   for_each     = var.volumes
   catalog_name = each.value.catalog
-  schema_name  = databricks_schema.this["${each.value.catalog_key}.${each.value.schema}"].name
+  schema_name  = databricks_schema.this[each.value.schema_key].name
   name         = each.value.name
   volume_type  = "MANAGED"
-  comment      = "Managed volume. Raw files here are NOT masked by ABAC; restrict access by grant."
+  comment      = "Managed volume. Files are NOT masked by ABAC; access is by grant only."
 }
 
 # -----------------------------------------------------------------------------
 # Governed tags on catalogs and schemas (values must exist in tag policies).
 # -----------------------------------------------------------------------------
-resource "databricks_entity_tag_assignment" "catalog_env" {
-  for_each    = var.catalogs
-  entity_type = "catalogs"
-  entity_name = databricks_catalog.this[each.key].name
-  tag_key     = "piq_env"
-  tag_value   = each.value.env
+locals {
+  catalog_tags = merge(
+    { for ck, c in var.catalogs : "${ck}|piq_env" => { catalog_key = ck, key = "piq_env", value = c.env } },
+    { for ck, c in var.catalogs : "${ck}|piq_domain" => { catalog_key = ck, key = "piq_domain", value = c.owner } },
+  )
+  schema_tags = { for item in flatten([
+    for sk, s in var.schemas : [for tk, tv in s.tags : { key = "${sk}|${tk}", schema_key = sk, tag = tk, value = tv }]
+  ]) : item.key => item }
 }
 
-resource "databricks_entity_tag_assignment" "catalog_domain" {
-  for_each    = var.catalogs
+resource "databricks_entity_tag_assignment" "catalog" {
+  for_each    = local.catalog_tags
   entity_type = "catalogs"
-  entity_name = databricks_catalog.this[each.key].name
-  tag_key     = "piq_domain"
-  tag_value   = each.value.domain
+  entity_name = databricks_catalog.this[each.value.catalog_key].name
+  tag_key     = each.value.key
+  tag_value   = each.value.value
 }
 
-resource "databricks_entity_tag_assignment" "schema_layer" {
-  for_each    = var.schemas
+resource "databricks_entity_tag_assignment" "schema" {
+  for_each    = local.schema_tags
   entity_type = "schemas"
-  entity_name = databricks_schema.this[each.key].id
-  tag_key     = "piq_layer"
-  tag_value   = each.value.layer
+  entity_name = databricks_schema.this[each.value.schema_key].id
+  tag_key     = each.value.tag
+  tag_value   = each.value.value
 }
 
 output "catalog_names" {

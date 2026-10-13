@@ -39,7 +39,7 @@ locals {
   # Microsoft Graph application permissions the Terraform SP needs.
   graph_roles = concat(
     ["Group.ReadWrite.All", "Application.ReadWrite.OwnedBy", "User.Read.All"],
-    module.naming.test_users.enabled ? ["User.ReadWrite.All"] : [],
+    length(module.naming.test_users) > 0 ? ["User.ReadWrite.All"] : [],
   )
 }
 

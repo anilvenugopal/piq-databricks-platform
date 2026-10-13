@@ -15,11 +15,13 @@ variable "env" { type = string }
 variable "prefix" { type = string }
 variable "ip_access_list" { type = list(string) }
 variable "role_groups" {
-  description = "role -> list of group names in this env (all data domains); 'sandbox' included"
+  description = "role -> group names in this env, across all producer domains (for compute policies)"
   type        = map(list(string))
 }
-variable "admin_group" { type = string }
-variable "warehouses" { type = any }
+variable "warehouses" {
+  description = "naming.warehouses[env]: name -> {size, max_clusters, auto_stop_mins, can_use, can_manage, tags}"
+  type        = any
+}
 variable "cluster_policies" { type = any }
 variable "is_monitoring_home" {
   description = "true for the workspace that hosts platform views and system-table grants"
@@ -55,12 +57,13 @@ resource "databricks_default_namespace_setting" "this" {
 }
 
 # -----------------------------------------------------------------------------
-# SQL warehouses (serverless). Shared per env; attribution comes from tags and
-# query history, not from one warehouse per domain.
+# SQL warehouses (serverless). Dedicated per producer domain, vault and consumer
+# domain, plus one shared warehouse. Names carry no environment; tags do, and
+# piq_domain makes SQL spend attributable in system.billing.usage.
 # -----------------------------------------------------------------------------
 resource "databricks_sql_endpoint" "this" {
   for_each                  = var.warehouses
-  name                      = "${var.prefix}-${var.env}-${each.key}"
+  name                      = each.key
   cluster_size              = each.value.size
   max_num_clusters          = each.value.max_clusters
   auto_stop_mins            = each.value.auto_stop_mins
@@ -68,13 +71,12 @@ resource "databricks_sql_endpoint" "this" {
   warehouse_type            = "PRO"
 
   tags {
-    custom_tags {
-      key   = "piq_env"
-      value = var.env
-    }
-    custom_tags {
-      key   = "piq_workload"
-      value = each.key
+    dynamic "custom_tags" {
+      for_each = each.value.tags
+      content {
+        key   = custom_tags.key
+        value = custom_tags.value
+      }
     }
   }
 }
@@ -84,14 +86,14 @@ resource "databricks_permissions" "warehouse" {
   sql_endpoint_id = databricks_sql_endpoint.this[each.key].id
 
   dynamic "access_control" {
-    for_each = distinct(flatten([for r in each.value.CAN_USE : lookup(var.role_groups, r, [])]))
+    for_each = toset(each.value.can_use)
     content {
       group_name       = access_control.value
       permission_level = "CAN_USE"
     }
   }
   dynamic "access_control" {
-    for_each = distinct(concat([var.admin_group], flatten([for r in each.value.CAN_MANAGE : lookup(var.role_groups, r, [])])))
+    for_each = toset(each.value.can_manage)
     content {
       group_name       = access_control.value
       permission_level = "CAN_MANAGE"
@@ -110,7 +112,7 @@ locals {
 
 resource "databricks_cluster_policy" "this" {
   for_each    = local.policies
-  name        = "${var.prefix}-${var.env}-${each.key}"
+  name        = "${var.prefix}-${each.key}"
   description = each.value.description
   definition = jsonencode(merge(
     {

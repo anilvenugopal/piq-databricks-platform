@@ -1,0 +1,31 @@
+resources:
+  jobs:
+    dbt_build:
+      name: ${var.domain}-dbt-build
+      tags:
+        piq_domain: ${var.domain}
+      schedule:
+        quartz_cron_expression: "0 0 5 * * ?"
+        timezone_id: UTC          # development-mode deploys pause schedules automatically
+      tasks:
+        - task_key: dbt_build
+          dbt_task:
+            project_directory: ../dbt
+            warehouse_id: ${var.warehouse_id}
+            catalog: ${var.env}_${var.domain}   # built from env: no hard-coded environment
+            schema: info_mart
+            commands:
+              - dbt deps
+              - dbt build --target ${var.env}
+          environment_key: dbt
+      environments:
+        - environment_key: dbt
+          spec:
+            client: "2"
+            dependencies:
+              - dbt-databricks>=1.9
+
+variables:
+  warehouse_id:
+    lookup:
+      warehouse: ${var.warehouse_name}

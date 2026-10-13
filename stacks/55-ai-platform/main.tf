@@ -1,8 +1,7 @@
 # =============================================================================
 # 55-ai-platform - Vector Search endpoints, App Spaces, Lakebase projects.
 # Model routing, guardrails and per-user AI budgets live in Unity AI Gateway:
-# the AI budget is in stack 30; gateway endpoints are configured per domain in
-# bundles (see docs/ARCHITECTURE.md, "AI and apps").
+# the AI budget is in stack 30; gateway endpoints are configured in bundles.
 # =============================================================================
 
 module "naming" {
@@ -21,12 +20,7 @@ data "terraform_remote_state" "account" {
 }
 
 locals {
-  pg = module.naming.platform_groups
-  role_groups = { for env in module.naming.env_keys : env => {
-    for role in module.naming.roles : role => [
-      for k, g in module.naming.functional_groups : g.name if g.env == env && g.role == role
-    ]
-  } }
+  pg               = module.naming.platform_group_names
   usage_policy_ids = data.terraform_remote_state.account.outputs.usage_policy_ids
 }
 
@@ -35,11 +29,11 @@ module "ai_dev" {
   providers        = { databricks = databricks.dev }
   env              = "dev"
   prefix           = module.naming.prefix
-  domains          = module.naming.data_domains
+  domains          = module.naming.domains
   usage_policy_ids = local.usage_policy_ids
   vector_search    = module.naming.workspace_objects.vector_search
-  role_groups      = local.role_groups["dev"]
-  admin_group      = local.pg["dev-workspace-admins"].name
+  role_groups      = module.naming.role_groups["dev"]
+  admin_group      = local.pg["dev-workspace-admins"]
 }
 
 module "ai_prd" {
@@ -47,11 +41,11 @@ module "ai_prd" {
   providers        = { databricks = databricks.prd }
   env              = "prd"
   prefix           = module.naming.prefix
-  domains          = module.naming.data_domains
+  domains          = module.naming.domains
   usage_policy_ids = local.usage_policy_ids
   vector_search    = module.naming.workspace_objects.vector_search
-  role_groups      = local.role_groups["prd"]
-  admin_group      = local.pg["prd-workspace-admins"].name
+  role_groups      = module.naming.role_groups["prd"]
+  admin_group      = local.pg["prd-workspace-admins"]
 }
 
 output "ai" {

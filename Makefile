@@ -2,7 +2,7 @@
 STACK ?= 10-foundation
 STACKS := 10-foundation 20-identity 30-account 40-unity-catalog 50-workspace 55-ai-platform 60-governance 70-observability
 
-.PHONY: validate test fmt init plan apply output all-plan
+.PHONY: validate test plan-test fmt init plan apply output all-plan
 
 validate:            ## config checks + terraform fmt check
 	python3 scripts/validate_config.py
@@ -10,6 +10,9 @@ validate:            ## config checks + terraform fmt check
 
 test:               ## naming module and validator tests (no cloud access needed)
 	python3 tests/naming/run_tests.py
+
+plan-test:          ## mocked plan of every stack (needs provider downloads)
+	python3 tests/stacks/run_plan_tests.py
 
 fmt:
 	terraform fmt -recursive

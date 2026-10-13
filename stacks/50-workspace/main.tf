@@ -1,5 +1,5 @@
 # =============================================================================
-# 50-workspace - workspace settings, SQL warehouses, compute policies,
+# 50-workspace - workspace settings, SQL warehouses, compute policies and
 # system-table access. One module call per environment.
 # =============================================================================
 
@@ -14,17 +14,7 @@ data "terraform_remote_state" "foundation" {
 }
 
 locals {
-  wsobj = module.naming.workspace_objects
-  pg    = module.naming.platform_groups
-
-  # env -> role -> [group names across all data domains]; plus the sandbox group
-  role_groups = { for env in module.naming.env_keys : env => merge(
-    { for role in module.naming.roles : role => [
-      for k, g in module.naming.functional_groups : g.name if g.env == env && g.role == role
-    ] },
-    { sandbox = env == "dev" ? [local.pg["sandbox-users"].name] : [local.pg["prd-experimenters"].name] },
-  ) }
-
+  pg             = module.naming.platform_group_names
   system_schemas = ["access", "compute", "lakeflow", "query", "serving"]
 }
 
@@ -35,12 +25,11 @@ module "ws_dev" {
   env                = "dev"
   prefix             = module.naming.prefix
   ip_access_list     = module.naming.environments["dev"].ip_access_list
-  role_groups        = local.role_groups["dev"]
-  admin_group        = local.pg["dev-workspace-admins"].name
-  warehouses         = local.wsobj.sql_warehouses
-  cluster_policies   = local.wsobj.cluster_policies
+  role_groups        = module.naming.role_groups["dev"]
+  warehouses         = module.naming.warehouses["dev"]
+  cluster_policies   = module.naming.workspace_objects.cluster_policies
   is_monitoring_home = false
-  monitoring_group   = local.pg["platform-monitoring"].name
+  monitoring_group   = local.pg["platform-monitoring"]
   system_schemas     = local.system_schemas
 }
 
@@ -51,15 +40,15 @@ module "ws_prd" {
   env                = "prd"
   prefix             = module.naming.prefix
   ip_access_list     = module.naming.environments["prd"].ip_access_list
-  role_groups        = local.role_groups["prd"]
-  admin_group        = local.pg["prd-workspace-admins"].name
-  warehouses         = local.wsobj.sql_warehouses
-  cluster_policies   = local.wsobj.cluster_policies
+  role_groups        = module.naming.role_groups["prd"]
+  warehouses         = module.naming.warehouses["prd"]
+  cluster_policies   = module.naming.workspace_objects.cluster_policies
   is_monitoring_home = true
-  monitoring_group   = local.pg["platform-monitoring"].name
+  monitoring_group   = local.pg["platform-monitoring"]
   system_schemas     = local.system_schemas
 }
 
 output "warehouse_ids" {
-  value = { dev = module.ws_dev.warehouse_ids, prd = module.ws_prd.warehouse_ids }
+  description = "env -> warehouse name -> id"
+  value       = { dev = module.ws_dev.warehouse_ids, prd = module.ws_prd.warehouse_ids }
 }

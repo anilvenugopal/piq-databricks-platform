@@ -1,228 +1,191 @@
 # Architecture
 
-This document describes what the platform is and why each choice was made. For
-the steps to build it, see [RUNBOOK.md](RUNBOOK.md).
+What the platform is and why each choice was made. For the steps to build it,
+see [RUNBOOK.md](RUNBOOK.md); for day-2 procedures, [OPERATIONS.md](OPERATIONS.md).
 
 ## 1. Topology
 
 ```
 Microsoft Entra ID ──(automatic identity management)──┐
-   users, groups, service principals                   │
-                                                       ▼
+  users, groups, service principals                    ▼
 GitHub Actions ──(OIDC)──> sp-piq-terraform ──> Databricks account
                                                  ├─ Unity Catalog metastore (one per region)
-                                                 ├─ piq-dev workspace ── dev_* catalogs ── ADLS dev
-                                                 └─ piq-prd workspace ── prd_* catalogs ── ADLS prd
+                                                 ├─ dbw-piq-dev ── dev_* catalogs ─────────── ADLS dev
+                                                 └─ dbw-piq-prd ── prd_* catalogs ─────────── ADLS prd
+                                                       prd_claims_anon ──read-only──> dbw-piq-dev
 ```
 
 | Plane | Lives in | Holds |
 |---|---|---|
-| Control plane | Databricks' Azure subscription | UI, APIs, job scheduler, Unity Catalog metadata |
-| Classic compute plane | Your VNet (`vnet-piq-<env>`) | Cluster VMs, only when classic compute is used |
-| Serverless compute plane | Databricks-managed, same region | SQL warehouses, serverless jobs/pipelines, apps, model serving |
+| Control plane | Databricks' Azure subscription | UI, APIs, scheduler, Unity Catalog metadata |
+| Classic compute plane | Your VNet | Cluster VMs, only when classic compute is used |
+| Serverless compute plane | Databricks-managed, same region | Warehouses, serverless jobs and pipelines, apps, serving |
 | Data | Your storage accounts | Every managed table, volume and file |
 
-The account is created implicitly by the first Premium workspace in your Entra
-tenant. The regional metastore is created and assigned automatically.
+One workspace per environment. Producers and consumers work in the same
+workspace; isolation comes from grants, warehouse permissions and cost tags,
+not from separate workspaces. A consumer workspace can be added later as a
+configuration change plus read-only bindings.
 
-## 2. Environments and workspaces
+## 2. Domains and products
 
-Two workspaces, one per environment. Domains are **catalogs**, not workspaces:
-one platform team serves several domains, so a workspace per domain would multiply
-admin overhead without adding isolation that catalogs and bindings don't already
-give. Add `stg` later by extending `config/platform.yaml` and the two
-per-environment module calls in stacks 40, 50, 55 and 60.
+| Kind | Examples | Catalog | Publishes | Reads |
+|---|---|---|---|---|
+| Shared raw vault | vault | `{env}_vault` | Nothing (internal) | Source systems |
+| Producer domain | claims, policy_financial | `{env}_{domain}` | Base products | The vault |
+| Derived producer | profitability | `{env}_{domain}` | Products built from products | Other domains' products, the vault |
+| Consumer domain | exec_reporting | optional `prd_{consumer}` | Nothing | Products it is approved for |
 
-Workspaces use VNet injection with secure cluster connectivity (no public IPs on
-cluster nodes). Networking cannot be changed cheaply after creation, so it is set
-from day one even though most compute is serverless.
+A **product** is one schema `product_{name}` in its domain's catalog (tables,
+views, functions, models or agents; apps run in the domain's App Space) and one
+Entra group `piq-{env}-product-{name}`. Publishing is an entry in
+`config/products/<domain>.yaml`. Approving a consumer adds it to the product's
+`consumers` list; Terraform nests the consumer's groups into the product group.
+Consumer domains exist in prd only.
 
-## 3. Catalogs, schemas, storage
+Derived products read **products**, never another domain's private schemas, so
+a domain can change anything behind its contract. Each product's `consumers`
+list is its impact list; Unity Catalog lineage shows the chain.
 
-| Catalog | Bound to | Contains |
-|---|---|---|
-| `{env}_{domain}` | `{env}` workspace | `bronze`, `staging`, `silver`, `gold`, `marts`, `ref`, `audit`, `ai` schemas; `bronze.landing` and `bronze.documents` volumes |
-| `dev_sandbox` | dev | `u_<user>` personal schemas from `config/sandbox_users.yaml` |
-| `prd_sandbox` | prd | `exp_<name>` approved experiments from `config/experiments.yaml` |
-| `{env}_platform` | `{env}` | `governance` (masking functions), `audit`, `monitoring`, `observability` views (prd) |
+## 3. Catalogs and schemas
 
-Storage chain for each catalog:
+| Catalog | Schemas |
+|---|---|
+| `{env}_vault` | `landing` (volumes), `stage_{source}`, `raw_vault`, `business_vault_core`, `admin` |
+| `{env}_{domain}` | private: `admin`, `business_vault`, `info_mart`, `reporting`, `sandbox`, `ai`, `event_log`; products: `product_{name}` |
+| `prd_{consumer}` | `staging`, `prep`, `reporting` |
+| `prd_{domain}_anon` | `data` |
+| `{env}_platform` | `governance` (mask functions), `audit`, `monitoring`, `observability` |
+| `{env}_sandbox` | `u_{user}` (dev), `exp_{name}` (prd) |
 
-```
-access connector ac-piq-<env> (Azure managed identity, Storage Blob Data Contributor)
-  -> storage credential <env>_lake_credential      (ISOLATED to the env workspace)
-  -> external location  <catalog>_root             (abfss://<container>@st...<env>.../)
-  -> catalog managed location
-```
+Bindings: every catalog is bound read-write to its environment's workspace.
+`prd_{domain}_anon` is also bound read-only to dev. Nothing else crosses.
 
-Users hold **no** storage permissions. When a query runs, Unity Catalog checks
-grants and vends short-lived credentials scoped to the exact paths needed.
-Credentials, external locations and catalogs are all created `ISOLATED` through
-their environment's workspace, so the dev workspace cannot use prd storage paths
-even through an external table.
+Storage chain per catalog: access connector (managed identity) → storage
+credential → external location → managed location. Users hold no storage
+permissions; Unity Catalog vends short-lived, path-scoped credentials.
 
-## 4. Identity
+## 4. Data Vault flow
 
-All identities live in Entra ID and are managed by stack 20 (`azuread` provider).
-Automatic identity management (AIM) makes them visible in Databricks; stack 30
-resolves each into the account with the `databricks_account_iam_external_*_v2`
-data sources and assigns them to workspaces.
-
-| Group type | Name pattern | Count (3 domains) | Purpose |
+| Layer | Where | Owner | Writer |
 |---|---|---|---|
-| Functional | `piq-{env}-{domain}-{role}` | 36 | What receives Unity Catalog grants |
-| Persona | `piq-persona-{name}` | 8 | What people join; nested into functional/platform groups |
-| Platform | `piq-{name}` | 8 | Admin scopes, monitoring, sandboxes |
+| Landing | `{env}_vault.landing` | Vault team | `sp-piq-{env}-vault-loader` |
+| Staging | `{env}_vault.stage_{source}` | Vault team | vault loader |
+| Raw vault | `{env}_vault.raw_vault` | Vault team | vault loader |
+| Shared business vault | `{env}_vault.business_vault_core` | Vault team | vault loader |
+| Business vault | `{env}_{domain}.business_vault` | Domain | domain deployer |
+| Information marts | `{env}_{domain}.info_mart` | Domain | domain deployer |
+| Products | `{env}_{domain}.product_{name}` | Domain | domain deployer |
 
-Roles: `producer`, `consumer`, `analyst`, `admin`, `ai`, `dbadmin`.
+Vault tables carry `piq_steward_domain` and `piq_source_system` tags. Promotion
+moves no data: a product's dbt models change their target schema from
+`info_mart` to `product_{name}`.
 
-Persona nesting reproduces the Snowflake persona table: a data engineer joins
-`piq-persona-data-engineer`, which is a member of `piq-dev-*-producer`,
-`piq-prd-*-analyst` and `piq-sandbox-users`.
+## 5. Identity
 
-**Admin scopes (separation of duties):**
+All identities live in Entra ID (stack 20); Databricks sees them through
+automatic identity management and stack 30 resolves them into the account.
 
-| Scope | Group | Can |
+| Group | Pattern | Purpose |
 |---|---|---|
-| Account admin | `piq-account-admins` + Terraform SP | Workspaces, identity, budgets, account settings. Break-glass for humans |
-| Metastore admin | `piq-metastore-admins` (contains Terraform SP) | Top-level Unity Catalog objects |
-| Workspace admin | `piq-{env}-workspace-admins` | Compute and settings in one workspace |
-| Governance admin | `piq-governance-admins` | Tag policies, masking functions, ABAC policies (via CODEOWNERS review) |
-| Monitoring | `piq-platform-monitoring` | Read system tables and platform views |
+| Local roles | `piq-{env}-{domain}-{producer, analyst, ai, dbadmin}` | Domain team access |
+| Writer | `piq-{env}-{domain}-writer` | The domain deployer; exempt from masks |
+| Vault | `piq-{env}-vault-{engineer, writer}` | Vault team; writer holds the loader |
+| Product | `piq-{env}-product-{name}` | Readers of one product |
+| Consumer | `piq-prd-{consumer}-{role}` | Consumer domain; owned and populated by its lead |
+| SAR | `piq-{env}-sar-{policy}` | Sensitive access; members approved by governance |
+| Platform | `piq-{name}` | mesh-admins, metastore-admins, workspace admins, mesh-governance, monitoring, sandbox |
+| Persona | `piq-persona-{name}` | Job personas nested into the groups above |
 
-**Service principals** (`config/service_principals.yaml`): `sp-piq-dev-deploy`,
-`sp-piq-prd-deploy`, `sp-piq-powerbi`, `sp-piq-monitoring`, plus
-`sp-piq-terraform` from bootstrap. CI authenticates with GitHub OIDC federated
-credentials scoped to `repo:<org>/<repo>:environment:<env>`. No client secrets.
+Service principals: `sp-piq-{env}-{domain}-deploy` per domain (member of its
+producer and writer groups), `sp-piq-{env}-vault-loader`, plus extras in
+`service_principals.yaml`. All authenticate with GitHub OIDC, scoped to
+`repo:<org>/<repo>:environment:<env>`. In prd, producer groups contain only
+deployers: humans read prd and change it through CI.
 
-## 5. Access model
+## 6. Access model
 
-`config/access_matrix.yaml` is your Snowflake LAYER x ROLE matrix. The naming
-module expands it into `databricks_grants` at schema level, plus catalog-level
-`USE_CATALOG` + `BROWSE` for every role and `ALL_PRIVILEGES` + `MANAGE` for
-`dbadmin`.
-
-Snowflake access roles (`_R`, `_RW`, `_RWC`) become **privilege bundles** rather
-than objects. In Unity Catalog, privileges inherit down the catalog → schema →
-object tree and are granted straight to groups, so an intermediate role layer adds
-indirection without adding control.
+Privilege bundles (`config/access_matrix.yaml`):
 
 | Bundle | Privileges |
 |---|---|
 | R | `USE_SCHEMA`, `SELECT`, `EXECUTE`, `READ_VOLUME` |
 | RW | R + `MODIFY`, `WRITE_VOLUME` |
 | RWC | RW + `CREATE_TABLE`, `CREATE_MATERIALIZED_VIEW`, `CREATE_FUNCTION`, `CREATE_VOLUME`, `CREATE_MODEL` |
+| O | `ALL_PRIVILEGES`, `MANAGE`: the grantable equivalent of ownership |
 
-Catalogs are owned by the Terraform SP, never a person, so ownership cannot drift.
-Grants are authoritative: anything granted outside Terraform is removed on the
-next apply of stack 40.
+Domain catalog: local roles get `USE_CATALOG` + `BROWSE`; dbadmin gets O;
+product groups get `USE_CATALOG` only, so consumers never see private schema
+names. Schema grants follow the matrix; each product schema adds R for its own
+product group; `event_log` adds R for all the domain's product groups. The real
+owner of every catalog is the Terraform service principal, and grants are
+authoritative: anything granted by hand is removed on the next apply.
 
-**Workspace objects are a second permission plane.** SQL warehouses, compute
-policies and vector search endpoints have their own ACLs, set from
-`config/workspace_objects.yaml` in stacks 50 and 55. A table grant does not let
-anyone run a warehouse.
+Workspace objects are a second permission plane: warehouse, policy and endpoint
+ACLs come from `workspace_objects.yaml` and the naming module.
 
-## 6. Governance
+## 7. Sensitive data
 
-- **Governed tags** (`config/governed_tags.yaml`): `piq_env`, `piq_domain`,
-  `piq_layer`, `piq_sensitivity`, `pii`, `piq_ai_approved`, `piq_owner`, each with
-  allowed values and a list of who may assign it. Catalogs get env/domain tags and
-  schemas get layer tags automatically.
-- **ABAC column masks** (stack 60): for every data catalog and every `pii` value,
-  one policy `ON CATALOG ... COLUMN MASK <env>_platform.governance.mask_<type>
-  TO account users EXCEPT <producer, admin, dbadmin of that domain> MATCH COLUMNS
-  has_tag_value('pii','<type>')`. Tagging a column is all a producer has to do.
-- **Data classification** scans data catalogs and proposes `class.*` system tags.
-  Review findings, then apply the governed `pii` tag that drives masking.
-- **Tagging is a security boundary.** Whoever can set `pii` decides what is
-  masked; assigners are restricted per tag and the tag config is CODEOWNERS-protected.
+Masks are ABAC column-mask policies on every domain, vault and consumer prep
+catalog, one per mask in `governed_tags.yaml`, matching columns by tag
+(`pii = ssn`, `sensitive_metric = financial`, ...). Exceptions are only:
 
-Masks apply to tables, materialized views and streaming tables. They do **not**
-apply inside files in volumes; see section 9.
+- SAR groups that unlock that mask (`config/sars.yaml`), in every catalog;
+- the catalog's data writers (domain writer group, vault writer group).
 
-## 7. Compute and cost
+Producers, analysts, product and consumer groups all see masked values unless
+they hold the SAR. Derived products must carry sensitive tags forward on any
+column they republish. Masks do not apply inside files: raw documents stay in
+the vault's `landing` volume.
 
-| Snowflake construct | Here |
-|---|---|
-| 16 domain warehouses | Two serverless warehouses per env (`piq-<env>-etl`, `piq-<env>-bi`), auto-stop 10 min |
-| Resource monitors | Budgets (alert-only) + warehouse auto-stop + compute policies |
-| Query tags | Serverless usage policies, warehouse/cluster custom tags |
+## 8. Compute and cost
 
-Attribution: every env x domain has a **serverless usage policy** carrying
-`piq_env` and `piq_domain` tags; the domain's groups and service principals are
-its users. Warehouses carry `piq_env` and `piq_workload`. Compute policies force
-`piq_env` and require `piq_domain` on any classic cluster.
-`prd_platform.monitoring.cost_untagged_usage` shows anything that escaped.
-
-Budgets notify at 75/90/100% and never stop compute. That matches your
-alert-only `RM_PRD_TRANSFORM`; for hard ceilings rely on auto-stop, max cluster
-counts, compute policy limits and statement timeouts.
-
-## 8. Network and security
-
-| Control | Where | Default |
+| Warehouse | Users | Tags |
 |---|---|---|
-| VNet injection, no public IPs | 10-foundation | on |
-| NAT gateway for classic egress | `platform.yaml` `nat_gateway` | off (classic clusters cannot reach the internet) |
-| Workspace IP access lists | `platform.yaml` `ip_access_list` | empty = not enforced |
-| Serverless egress policy | `platform.yaml` `serverless_egress` | dev FULL_ACCESS; prd RESTRICTED in DRY_RUN |
-| Personal access tokens | 50-workspace | disabled |
-| Storage shared keys | 10-foundation | disabled (Entra auth only) |
-| Front-end / back-end Private Link | not yet | later hardening phase |
+| `piq-{domain}-transform` (per env) | that domain's producer, analyst, ai | `piq_domain = {domain}` |
+| `piq-vault-load` | vault writer, engineers | `piq_domain = vault` |
+| `piq-{consumer}-bi` (prd) | that consumer's groups | `piq_domain = {consumer}` |
+| `piq-shared` | sandbox users, governance, monitoring | `piq_domain = shared` |
 
-**IP access lists and GitHub-hosted runners do not mix**: runners come from
-thousands of addresses. Enable IP lists only with self-hosted runners in an
-allowed range, or keep them off for training.
+Producer warehouses are never granted to consumers. Serverless usage policies
+tag all other serverless usage by env and owner. Budgets alert at 75/90/100%;
+they never stop compute (auto-stop and compute policies cap it).
 
-## 9. AI and apps
+## 9. Naming
 
-The six seams from the design discussion, and how the repo handles each:
+The environment appears only in names whose scope spans environments:
 
-| Seam | Handling |
-|---|---|
-| Two permission planes | `workspace_objects.yaml` + bundle-level permissions |
-| App identity | Template defaults to on-behalf-of-user auth; app SPs get only declared resources |
-| PII in documents | Raw files in restricted `bronze.documents`; parse to tables; mask there; index only `piq_ai_approved` data |
-| Lakebase roles | Postgres roles provisioned by the app's bundle, not by UC grants |
-| Promotion | Deploy code, not artifacts: the same bundle goes dev → prd |
-| Outbound calls | Unity AI Gateway (budget in stack 30) + serverless egress policies |
+| Object | Environment in name | Example |
+|---|---|---|
+| Workspace | Yes | `dbw-piq-prd` |
+| Catalog | Yes, prefix | `prd_claims` |
+| Group, service principal | Yes | `piq-prd-claims-producer` |
+| Usage policy, budget | Yes | `piq-prd-claims` |
+| Schema, table, function, volume | No | `prd_claims.product_loss.loss_triangle` |
+| Warehouse, job, app, App Space | No | `piq-claims-transform` |
 
-Each domain catalog has an `ai` schema for tool functions, models, vector indexes
-and evaluation sets. Stack 55 creates one Vector Search endpoint per env and an
-App Space per domain with the domain's usage policy.
+Code never contains an environment: bundles pass `env`, dbt tasks set
+`catalog = {env}_{domain}`, SQL uses `IDENTIFIER(:env || '_claims...')`,
+notebooks read `env` from a job parameter.
 
-## 10. Observability
+## 10. Network and security
 
-System tables are account-wide, so one set of views in `prd_platform` covers both
-environments:
+VNet injection with no public IPs; optional NAT for classic egress; IP access
+lists (off by default, incompatible with GitHub-hosted runners); serverless
+egress policies (prd restricted, dry run first); PATs disabled; storage shared
+keys disabled. Private Link and customer-managed keys are later hardening steps.
 
-| View | Answers |
-|---|---|
-| `monitoring.cost_daily_by_env_domain` | What did each env x domain cost, by product |
-| `monitoring.cost_untagged_usage` | What escaped attribution, and who ran it |
-| `observability.query_activity_daily` | Who runs what on which warehouse |
-| `observability.job_run_outcomes` | Which pipelines fail |
-| `audit.denied_requests` | Which access attempts were refused |
-| `audit.permission_changes` | Who changed access (anything not by Terraform is drift) |
-| `governance.pii_columns` | Which columns are masked |
-| `governance.lineage_recent` | What feeds what |
+## 11. AI and apps
 
-## 11. Snowflake → Databricks mapping
+Each domain has an `ai` schema and an App Space; agents and apps that are
+products keep their tables, functions and registered models in their product
+schema. Apps and agents query data on behalf of the caller (template
+`templates/obo-app`), so masks and grants apply to the person. Vector Search
+endpoints are per environment; index access is data access. AI spend has its
+own budget; outbound calls are limited by serverless egress policies.
 
-| Snowflake (your design) | Databricks (this repo) |
-|---|---|
-| `{ENV}_INSURANCE` databases | `{env}_{domain}` catalogs bound to env workspaces |
-| `PIQ_ADMIN` | `{env}_platform` + system tables |
-| `SANDBOX` `U_*` / `EXP_*` via stored procedures | `dev_sandbox.u_*` / `prd_sandbox.exp_*` via YAML + PR |
-| Access roles `_R/_RW/_RWC` | Privilege bundles |
-| Functional roles (AD-synced) | Entra functional groups via AIM |
-| Persona → role assignments | Persona groups nested into functional groups |
-| `PIQ_SYSADMIN` / `SECADMIN` / `MASKINGADMIN` / `USERADMIN` | Account / metastore / workspace / governance admins; user admin is Entra |
-| Service users + RSA keys | Service principals + OIDC |
-| Network policies | IP access lists, VNet injection, egress policies |
-| Resource monitors | Budgets + usage policies + compute policies |
-| Object tags | Governed tags |
-| Masking policies | ABAC column masks |
-| schemachange versioned migrations | Terraform desired state + Asset Bundles for workloads |
-| `new_tenant.py` | One entry in `config/domains.yaml` |
-| Access portal → CREATE USER | Access portal → PR adding Entra membership |
+## 12. Observability
+
+Views in `prd_platform` over system tables: cost by env and domain, untagged
+usage, query activity, job outcomes, denied requests, permission changes, PII
+columns, lineage, and the product catalog (`governance.products`).

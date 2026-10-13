@@ -1,6 +1,8 @@
 command: ["streamlit", "run", "app.py"]
 env:
-  - name: CATALOG
-    value: dev_claims          # override per target in your bundle if needed
+  - name: PIQ_ENV
+    value: dev                 # set per target by the bundle deployment
+  - name: PIQ_DOMAIN
+    value: claims
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: sql-warehouse   # resolved from the app resource declared in databricks.yml

@@ -13,7 +13,8 @@ from databricks import sql
 from databricks.sdk.core import Config
 
 cfg = Config()  # host comes from the app environment
-CATALOG = os.environ.get("CATALOG", "dev_claims")
+# The catalog is built from the environment: no hard-coded environment.
+CATALOG = f"{os.environ.get('PIQ_ENV', 'dev')}_{os.environ.get('PIQ_DOMAIN', 'claims')}"
 WAREHOUSE_ID = os.environ["DATABRICKS_WAREHOUSE_ID"]
 
 st.set_page_config(page_title="Claims explorer", layout="wide")
@@ -38,7 +39,7 @@ def run(query: str) -> pd.DataFrame:
         return cur.fetchall_arrow().to_pandas()
 
 
-schema = st.selectbox("Schema", ["gold", "silver", "marts"])
+schema = st.selectbox("Product schema", ["product_loss"])
 try:
     tables = run(f"SHOW TABLES IN {CATALOG}.{schema}")
     if tables.empty:

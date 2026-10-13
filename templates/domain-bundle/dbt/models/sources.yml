@@ -1,0 +1,18 @@
+# Sources resolve their catalog from the target environment: no hard-coded env.
+version: 2
+
+sources:
+  - name: raw_vault
+    database: "{{ target.name }}_vault"
+    schema: raw_vault
+    tables:
+      - name: hub_claim
+      - name: lnk_claim_policy
+      - name: sat_claim_claims_admin
+
+  # A derived product would read other domains' PRODUCT schemas, for example:
+  # - name: earned_premium
+  #   database: "{{ target.name }}_policy_financial"
+  #   schema: product_earned_premium
+  #   tables:
+  #     - name: earned_premium

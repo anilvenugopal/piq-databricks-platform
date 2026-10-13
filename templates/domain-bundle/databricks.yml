@@ -1,0 +1,37 @@
+# Asset Bundle for one producer domain. Replace "claims" with your domain key.
+bundle:
+  name: piq-claims
+
+variables:
+  env:
+    description: Environment; every catalog name is built from it
+  domain:
+    default: claims
+  warehouse_name:
+    default: piq-claims-transform      # workspace objects carry no environment
+  deployer:
+    description: Application (client) id of sp-piq-<env>-claims-deploy
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-0000000000000000.0.azuredatabricks.net   # dbw-piq-dev
+    variables:
+      env: dev
+      deployer: 00000000-0000-0000-0000-000000000000
+    run_as:
+      service_principal_name: ${var.deployer}
+  prd:
+    mode: production
+    workspace:
+      host: https://adb-1111111111111111.1.azuredatabricks.net   # dbw-piq-prd
+    variables:
+      env: prd
+      deployer: 11111111-1111-1111-1111-111111111111
+    run_as:
+      service_principal_name: ${var.deployer}

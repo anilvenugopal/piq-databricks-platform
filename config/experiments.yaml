@@ -4,7 +4,7 @@
 # -----------------------------------------------------------------------------
 experiments: []
 #  - name: loss_ratio_model_v2
-#    description: Compare loss-ratio model features on prd gold
+#    description: Compare loss-ratio model features on prd products
 #    members: [jane.smith@yourtenant.onmicrosoft.com]
 #    approved_by: platform-lead@yourtenant.onmicrosoft.com
 #    ticket: "issue #34"

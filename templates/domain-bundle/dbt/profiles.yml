@@ -1,0 +1,17 @@
+# For running dbt locally only. On Databricks the dbt task generates the
+# connection itself, with catalog = {env}_{domain} from the bundle target.
+piq:
+  target: dev
+  outputs:
+    dev: &base
+      type: databricks
+      catalog: dev_claims
+      schema: info_mart
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      auth_type: oauth
+      threads: 4
+    prd:
+      <<: *base
+      catalog: prd_claims
+      threads: 8

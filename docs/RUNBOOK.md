@@ -111,7 +111,9 @@ the dev workspace as `test.analyst` (you will be asked to change the password).
 ./scripts/tf.sh 40-unity-catalog init && ./scripts/tf.sh 40-unity-catalog plan -out tfplan
 ```
 
-Read the plan: about 10 catalogs, 60+ schemas, 12 volumes, tag policies, grants.
+Read the plan: 14 catalogs (vault, three domains and platform/sandbox per
+environment, plus `prd_exec_reporting` and `prd_claims_anon`), about 74
+schemas, governed tags, grants and bindings.
 
 ```bash
 ./scripts/tf.sh 40-unity-catalog apply tfplan
@@ -119,9 +121,10 @@ Read the plan: about 10 catalogs, 60+ schemas, 12 volumes, tag policies, grants.
 
 **Verify** (dev workspace SQL editor, as yourself):
 ```sql
-SHOW CATALOGS;                       -- dev_* only; no prd_* catalogs here
-SHOW GRANTS ON SCHEMA dev_claims.gold;
-DESCRIBE CATALOG EXTENDED dev_claims;  -- isolation mode ISOLATED
+SHOW CATALOGS;                                  -- dev_* catalogs and prd_claims_anon only
+SHOW SCHEMAS IN dev_claims;                     -- private schemas plus product_loss
+SHOW GRANTS ON SCHEMA dev_claims.product_loss;  -- piq-dev-product-loss has SELECT
+SHOW GRANTS ON CATALOG dev_claims;              -- product groups: USE CATALOG only
 ```
 
 ## Phase 7: Workspace configuration (CI)
@@ -131,14 +134,15 @@ DESCRIBE CATALOG EXTENDED dev_claims;  -- isolation mode ISOLATED
 ./scripts/tf.sh 55-ai-platform init && ./scripts/tf.sh 55-ai-platform plan -out tfplan && ./scripts/tf.sh 55-ai-platform apply tfplan
 ```
 
-**Verify:** SQL Warehouses shows `piq-dev-etl` and `piq-dev-bi` (serverless,
-stopped). As `test.analyst`, `piq-dev-bi` is usable and `piq-dev-etl` is not
-listed. Settings → Developer → Access tokens is unavailable.
+**Verify:** SQL Warehouses shows `piq-claims-transform`, `piq-policy-financial-transform`,
+`piq-profitability-transform`, `piq-vault-load` and `piq-shared` in both
+workspaces, and `piq-exec-reporting-bi` in prd only. As `test.analyst`, only
+the three domain warehouses are usable. Personal access tokens are unavailable.
 
 ## Phase 8: Governance and observability (CI)
 
-Stacks 60 and 70 run SQL through `scripts/run_sql.py`, so the runner needs Python
-with `databricks-sdk` (CI installs it).
+Stacks 60 and 70 run SQL through `scripts/run_sql.py` on `piq-shared`, so the
+runner needs Python with `databricks-sdk` (CI installs it).
 
 ```bash
 ./scripts/tf.sh 60-governance init && ./scripts/tf.sh 60-governance plan -out tfplan && ./scripts/tf.sh 60-governance apply tfplan
@@ -147,23 +151,24 @@ with `databricks-sdk` (CI installs it).
 
 **Verify:**
 ```sql
-SHOW FUNCTIONS IN dev_platform.governance;   -- mask_ssn, mask_dob, mask_email, mask_phone, mask_name
-SHOW POLICIES ON CATALOG dev_claims;         -- five mask_* policies
-SELECT * FROM prd_platform.monitoring.cost_daily_by_env_domain LIMIT 10;   -- in prd workspace
+SHOW FUNCTIONS IN dev_platform.governance;   -- mask_ssn, mask_dob, mask_email, mask_phone, mask_name, mask_amount
+SHOW POLICIES ON CATALOG dev_claims;         -- six mask_* policies
+SELECT * FROM prd_platform.governance.products;   -- in prd: loss, earned_premium, loss_ratio
 ```
 
 ## Phase 9: Prove the access design
 
-Run `sql/labs/lab06_masking_test.sql`: section A as `test.engineer` (dev producer),
-sections B–D as `test.analyst`. Expected:
+Run `sql/labs/lab06_masking_test.sql` (dev) and `sql/labs/lab11_products.sql` (prd).
 
 | Check | Expected |
 |---|---|
-| Producer reads `dev_claims.silver.claimant` | raw values |
-| Analyst reads the same table | `[REDACTED]`, `***-**-6789`, year-only DOB, masked email/phone |
-| Analyst reads `dev_claims.bronze.*` | `PERMISSION_DENIED` |
-| Analyst references `prd_claims` from dev | catalog not accessible |
-| `prd_platform.audit.denied_requests` | shows the analyst's refused attempts |
+| Producer reads a tagged table | masked values (only SARs and writers are exempt) |
+| Producer after joining the `claimant_pii` SAR | clear values |
+| Analyst reads `dev_vault.landing` | `PERMISSION_DENIED` |
+| Any user references `prd_claims` from dev | catalog not accessible |
+| `test.executive` lists `prd_profitability` | only `product_loss_ratio` |
+| `test.executive` lists `prd_claims` | no schemas (not approved for Loss) |
+| `prd_platform.audit.denied_requests` | shows the refused attempts |
 
 ## Phase 10: Day-2 readiness
 

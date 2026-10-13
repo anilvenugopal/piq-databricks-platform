@@ -27,7 +27,7 @@ shows them as External and read-only. *Consequence:* app service principals (cre
 by Databricks per app) cannot join these groups; they get direct grants via bundles.
 
 ### ADR-005 prd writes by service principals only
-Prd producer groups contain only `sp-piq-prd-deploy`. Enforced twice: the naming
+Prd producer groups contain only the domain deployers (`sp-piq-prd-{domain}-deploy`, ADR-020). Enforced twice: the naming
 module precondition and `validate_config.py`. *Consequence:* engineers debug prd
 with read access and fix forward through CI.
 
@@ -62,3 +62,54 @@ be resolvable wherever the masked table is queried.
 ### ADR-012 On-behalf-of-user by default for apps and agents
 User-facing apps query as the signed-in user so ABAC applies to the person. App
 service principals hold only app-owned resources.
+
+---
+
+## Product architecture (supersedes parts of ADR-002, 003, 009, 010)
+
+### ADR-013 Shared enterprise raw vault
+One `{env}_vault` catalog, written only by `sp-piq-{env}-vault-loader`.
+Data Vault integrates on business keys shared across domains; per-domain
+vaults would duplicate hubs or give them two owners. Stewardship is recorded
+with `piq_steward_domain` and `piq_source_system` tags. Business vaults are
+owned by domains. *Trade-off:* the vault team can become a bottleneck;
+metadata-driven loaders keep adding a source a configuration review.
+
+### ADR-014 No Vault DAPs
+With a shared vault, domains read it through grants. A published interface over
+raw vault entities would duplicate that contract.
+
+### ADR-015 One catalog per domain, products as schemas
+Private and product schemas share `{env}_{domain}`. Promotion is a config entry
+and a model target change; no data moves. The private/published boundary is
+enforced by grants: product groups get `USE_CATALOG` without `BROWSE` and read
+only their product schema. *Revisit* with a separate published catalog if a
+grant mistake would be unacceptable. Supersedes the medallion layout of ADR-002.
+
+### ADR-016 One workspace per environment for producers and consumers
+Isolation from grants, warehouse ACLs and cost tags is sufficient. A consumer
+workspace can be added later as configuration plus read-only bindings, if
+consumer teams need to administer their own workspace.
+
+### ADR-017 Environment only where names span environments
+Catalogs (one metastore serves both environments), Entra groups, service
+principals and usage policies carry the environment, as a prefix. Schemas and
+workspace objects do not. Code never contains an environment.
+
+### ADR-018 SARs are the only mask exceptions
+Supersedes the producer/admin exemption of ADR-009. Masks exempt SAR groups and
+the identities that write the data. Producers build with masked values.
+
+### ADR-019 Dedicated warehouses per domain, vault and consumer
+Supersedes ADR-010. SQL warehouse usage is not covered by usage policies, so
+dedicated, tagged warehouses are the only exact SQL attribution. Serverless
+warehouses make the idle cost of several small warehouses negligible.
+
+### ADR-020 Per-domain deployers and product files per domain
+Each domain deploys with its own service principal, trusted only from its own
+repo's GitHub environment. Product definitions live in one file per domain so
+CODEOWNERS can route consumer approvals to the producing domain.
+
+### ADR-021 Anonymized production data through read-only catalogs
+`prd_{domain}_anon`, written by an anonymization job in prd and bound
+read-only to dev, is the only path from prd to dev.

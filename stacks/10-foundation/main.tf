@@ -22,9 +22,10 @@ locals {
   envs   = module.naming.environments
   sfx    = local.p.unique_suffix
 
-  containers = { for pair in setproduct(keys(local.envs), module.naming.storage_containers) :
-    "${pair[0]}-${pair[1]}" => { env = pair[0], name = pair[1] }
-  }
+  # One container per catalog (vault, domains, consumer prep, anonymized, platform, sandbox).
+  containers = { for item in flatten([
+    for env, names in module.naming.storage_containers : [for n in names : { env = env, name = n }]
+  ]) : "${item.env}-${item.name}" => item }
 
   nat_envs = { for env, cfg in local.envs : env => cfg if try(cfg.network.nat_gateway, false) }
 

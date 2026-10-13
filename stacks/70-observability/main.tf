@@ -34,7 +34,7 @@ resource "terraform_data" "view" {
     command = join(" ", [
       "python3 ${path.root}/../../scripts/run_sql.py",
       "--host ${data.terraform_remote_state.foundation.outputs.workspaces[local.home].url}",
-      "--warehouse-id ${data.terraform_remote_state.workspace.outputs.warehouse_ids[local.home]["bi"]}",
+      "--warehouse-id ${data.terraform_remote_state.workspace.outputs.warehouse_ids[local.home]["piq-shared"]}",
       "--file ${local.sql_root}/${each.value}",
       "--set catalog=${local.home}_platform",
     ])

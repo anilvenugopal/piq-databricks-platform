@@ -1,0 +1,19 @@
+name: piq_claims
+version: "1.0"
+profile: piq
+model-paths: ["models"]
+
+# Schemas map to the domain's layers. Product models set their own schema
+# (product_<name>); promoting a model = changing its schema here.
+models:
+  piq_claims:
+    business_vault:
+      +schema: business_vault
+      +materialized: table
+    info_mart:
+      +schema: info_mart
+      +materialized: table
+    products:
+      loss:
+        +schema: product_loss
+        +materialized: table

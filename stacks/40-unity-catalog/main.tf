@@ -1,9 +1,10 @@
 # =============================================================================
-# 40-unity-catalog - governed tag taxonomy + every Unity Catalog object.
+# 40-unity-catalog - governed tag taxonomy and every Unity Catalog object:
+# vault, domain (private + product schemas), consumer prep, anonymized,
+# platform and sandbox catalogs, with grants, bindings and tags.
 #
-# Prerequisite (RUNBOOK Phase 4): the piq-metastore-admins group, which contains
-# sp-<prefix>-terraform, is the metastore admin. That is what allows Terraform
-# to create storage credentials, external locations and catalogs.
+# Prerequisite (RUNBOOK Phase 4): piq-metastore-admins, which contains
+# sp-<prefix>-terraform, is the metastore admin.
 # =============================================================================
 
 module "naming" {
@@ -21,6 +22,8 @@ locals {
   ws         = data.terraform_remote_state.foundation.outputs.workspaces
   storage    = data.terraform_remote_state.foundation.outputs.storage
   connectors = data.terraform_remote_state.foundation.outputs.access_connectors
+  ws_ids     = { for env, w in local.ws : env => w.workspace_id }
+  pg         = module.naming.platform_group_names
 
   by_env = { for env in module.naming.env_keys : env => {
     catalogs = { for k, c in module.naming.catalogs : k => c if c.env == env }
@@ -31,47 +34,45 @@ locals {
 
 # -----------------------------------------------------------------------------
 # Governed tags (tag policies). Account-wide objects, created through the dev
-# workspace because the API is workspace-scoped.
+# workspace because the API is workspace-scoped. Generated values (domains,
+# products, sources) come from config.
 # -----------------------------------------------------------------------------
 resource "databricks_tag_policy" "this" {
   provider    = databricks.dev
-  for_each    = module.naming.governed_tags.tags
+  for_each    = module.naming.governed_tags
   tag_key     = each.key
   description = each.value.description
   values      = [for v in each.value.values : { name = v }]
 }
 
-# Who may APPLY each tag. Tagging is a security boundary: `pii` decides masking.
+# Who may apply each tag. Tagging is a security boundary: pii and
+# sensitive_metric decide masking. metastore-admins (which holds the Terraform
+# SP) stays a manager so Terraform can keep assigning tags.
 resource "databricks_access_control_rule_set" "tag" {
   provider = databricks.account
-  for_each = module.naming.governed_tags.tags
+  for_each = module.naming.governed_tags
   name     = "accounts/${local.account_id}/tagPolicies/${databricks_tag_policy.this[each.key].id}/ruleSets/default"
 
-  # metastore-admins contains sp-<prefix>-terraform; keep it a manager so that
-  # Terraform can still assign tags after this authoritative rule set applies.
   grant_rules {
-    principals = [
-      "groups/${module.naming.platform_groups["governance-admins"].name}",
-      "groups/${module.naming.platform_groups["metastore-admins"].name}",
-    ]
-    role = "roles/tagPolicy.manager"
+    principals = ["groups/${local.pg["mesh-governance"]}", "groups/${local.pg["metastore-admins"]}"]
+    role       = "roles/tagPolicy.manager"
   }
   grant_rules {
-    principals = [for g in module.naming.tag_assigner_groups[each.key] : "groups/${g}"]
+    principals = [for g in each.value.assigners : "groups/${g}"]
     role       = "roles/tagPolicy.assigner"
   }
 }
 
 # -----------------------------------------------------------------------------
-# Unity Catalog objects per environment (one module call per workspace provider)
+# Unity Catalog objects per environment
 # -----------------------------------------------------------------------------
 module "uc_dev" {
   source    = "../../modules/uc_environment"
   providers = { databricks = databricks.dev }
 
   env                  = "dev"
-  prefix               = module.naming.prefix
-  workspace_id         = local.ws["dev"].workspace_id
+  workspace_id         = local.ws_ids["dev"]
+  workspace_ids        = local.ws_ids
   access_connector_id  = local.connectors["dev"]
   storage_account_name = local.storage["dev"].name
   catalogs             = local.by_env["dev"].catalogs
@@ -87,8 +88,8 @@ module "uc_prd" {
   providers = { databricks = databricks.prd }
 
   env                  = "prd"
-  prefix               = module.naming.prefix
-  workspace_id         = local.ws["prd"].workspace_id
+  workspace_id         = local.ws_ids["prd"]
+  workspace_ids        = local.ws_ids
   access_connector_id  = local.connectors["prd"]
   storage_account_name = local.storage["prd"].name
   catalogs             = local.by_env["prd"].catalogs

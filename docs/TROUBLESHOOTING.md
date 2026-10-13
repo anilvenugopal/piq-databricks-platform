@@ -31,3 +31,17 @@ az account show                                   # which identity Terraform wil
 ./scripts/tf.sh 30-account plan -target='databricks_mws_permission_assignment.group'
 databricks auth describe --host <workspace-url>   # Databricks CLI identity check
 ```
+
+## Product architecture
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Stack 20: `azuread_users` fails | `resolve_consumer_leads: true` but no lead exists in Entra | Create the leads or set the flag back to `false` |
+| Consumer lead can't add members | Lead isn't an owner yet | Set `resolve_consumer_leads: true`, apply 20 |
+| Producer sees masked values | Expected: only SARs and writers are exempt | Add the producer group to the SAR in `sars.yaml` if it really needs clear values |
+| Consumer sees no schemas in a domain catalog | Not approved for any of its products | Add the consumer to the product's `consumers`, apply 20 |
+| Product view fails for consumers | View reads the vault or a private schema the consumer can't reach | Build products as tables from the domain's business vault or marts |
+| Dev can't read `prd_claims_anon` tables | External location binding blocks reads from dev | Bind the `prd_claims_anon_root` external location read-only to dev as well |
+| Mask on a financial column fails | Column type is not castable to `DECIMAL(38,6)` | Use DECIMAL for columns tagged `sensitive_metric = financial` |
+| `make plan-test` skips a stack | Provider not downloadable in that environment | Run it in CI, where the registry is reachable |
+| dbt task can't find the catalog | `env` variable not set for the target | Set `variables.env` in the bundle target |

@@ -1,8 +1,11 @@
-# Access-portal provisioning. An approved access-request issue becomes a PR that
-# edits config/personas.yaml and config/sandbox_users.yaml. Merge, then apply
-# stacks 20 (Entra membership), 30 (account sync) and 40 (sandbox schema).
-# The issue body carries a JSON block written by the portal Worker:
-#   <!-- piq-access {"upn":"jane@corp.com","persona":"data-analyst","sandbox":true} -->
+# Access-portal provisioning. An approved access-request issue becomes a pull
+# request; CODEOWNERS routes it to the right approver (producing domain for
+# product access, governance for SARs, platform for personas and sandboxes).
+# The portal Worker writes a JSON block into the issue body, for example:
+#   <!-- piq-access {"type":"product","name":"loss_ratio","consumer":"exec_reporting"} -->
+#   <!-- piq-access {"type":"persona","upn":"jane@corp.com","name":"data-analyst"} -->
+#   <!-- piq-access {"type":"sandbox","upn":"jane@corp.com"} -->
+#   <!-- piq-access {"type":"sar","name":"financial_metrics","env":"prd","group":"consumer:exec_reporting:analyst"} -->
 name: provision-access
 
 on:
@@ -22,29 +25,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install pyyaml
-      - name: Parse request
-        id: req
+      - run: pip install -r requirements.txt
+      - name: Edit config
         env:
           BODY: ${{ github.event.issue.body }}
+          ISSUE: ${{ github.event.issue.number }}
         run: |
           json=$(printf '%s' "$BODY" | sed -n 's/.*<!-- piq-access \(.*\) -->.*/\1/p' | head -1)
           [ -n "$json" ] || { echo "No piq-access block in issue body"; exit 1; }
-          echo "upn=$(echo "$json" | jq -r .upn)" >> "$GITHUB_OUTPUT"
-          echo "persona=$(echo "$json" | jq -r '.persona // empty')" >> "$GITHUB_OUTPUT"
-          echo "sandbox=$(echo "$json" | jq -r '.sandbox // false')" >> "$GITHUB_OUTPUT"
-      - name: Edit config
-        run: |
-          args="--upn ${{ steps.req.outputs.upn }} --issue ${{ github.event.issue.number }}"
-          [ -n "${{ steps.req.outputs.persona }}" ] && args="$args --persona ${{ steps.req.outputs.persona }}"
-          [ "${{ steps.req.outputs.sandbox }}" = "true" ] && args="$args --sandbox"
-          python3 scripts/provision_access.py $args
+          args="$(echo "$json" | jq -r '.type')"
+          for k in upn name consumer env group; do
+            v=$(echo "$json" | jq -r --arg k "$k" '.[$k] // empty')
+            [ -n "$v" ] && args="$args --$k $v"
+          done
+          python3 scripts/provision_access.py $args --issue "$ISSUE"
           python3 scripts/validate_config.py
+          echo "SUMMARY=$(echo "$json" | jq -c .)" >> "$GITHUB_ENV"
       - uses: peter-evans/create-pull-request@v6
         with:
           branch: access/issue-${{ github.event.issue.number }}
-          title: "Access: ${{ steps.req.outputs.upn }} (issue #${{ github.event.issue.number }})"
+          title: "Access request #${{ github.event.issue.number }}"
           body: |
             Closes #${{ github.event.issue.number }}.
-            After merge, apply stacks `20-identity`, `30-account` and `40-unity-catalog` in that order.
-          commit-message: "access: ${{ steps.req.outputs.upn }} via issue #${{ github.event.issue.number }}"
+            Request: `${{ env.SUMMARY }}`
+            After merge, apply the stacks listed in docs/OPERATIONS.md for this request type.
+          commit-message: "access: issue #${{ github.event.issue.number }}"

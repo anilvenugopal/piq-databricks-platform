@@ -25,6 +25,11 @@ github:
   org: your-github-org
   platform_repo: piq-databricks-platform
 
+identity:
+  # true = consumer leads (config/consumers/*.yaml) become Entra owners of their
+  # consumer groups. Turn on once those users exist in your tenant.
+  resolve_consumer_leads: false
+
 notifications:
   ops_email: platform-ops@example.com
 

@@ -31,3 +31,10 @@ CREATE OR REPLACE FUNCTION ${catalog}.governance.mask_name(val STRING)
 RETURNS STRING
 COMMENT 'ABAC mask: [REDACTED]'
 RETURN CASE WHEN val IS NULL THEN NULL ELSE '[REDACTED]' END;
+
+-- Sensitive financial metrics (tag sensitive_metric = financial). Columns with
+-- this tag should be DECIMAL; the masked value is NULL.
+CREATE OR REPLACE FUNCTION ${catalog}.governance.mask_amount(val DECIMAL(38, 6))
+RETURNS DECIMAL(38, 6)
+COMMENT 'ABAC mask: hide sensitive financial amounts'
+RETURN CAST(NULL AS DECIMAL(38, 6));
