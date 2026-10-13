@@ -1,0 +1,55 @@
+# -----------------------------------------------------------------------------
+# personas.yaml - job personas. Each persona is an Entra group nested INTO the
+# functional groups it needs. People join a persona group; access follows.
+#
+# member_of entries:
+#   "<env>:<domain|*>:<role>"  functional group(s); * = every data domain
+#   "<platform-group-key>"     a platform group from platform_groups below
+#
+# members: Entra UPNs. In a real enterprise HR/IdP processes own membership;
+# here the access portal (scripts/provision_access.py) edits these lists via PR.
+# -----------------------------------------------------------------------------
+personas:
+  data-engineer:
+    description: Builds pipelines in dev, reads prd
+    member_of: ["dev:*:producer", "prd:*:analyst", "sandbox-users"]
+    members: []
+  data-analyst:
+    description: Consumes curated prd data, explores dev
+    member_of: ["prd:*:consumer", "dev:*:analyst", "sandbox-users"]
+    members: []
+  bi-developer:
+    description: Builds dashboards on curated prd data
+    member_of: ["prd:*:consumer", "sandbox-users"]
+    members: []
+  ai-engineer:
+    description: Builds agents and models in dev, reads prd curated layers
+    member_of: ["dev:*:ai", "dev:*:producer", "prd:*:analyst", "sandbox-users"]
+    members: []
+  team-lead:
+    description: Reviews work across domains
+    member_of: ["prd:*:analyst", "sandbox-users"]
+    members: []
+  platform-admin:
+    description: Operates the platform (break-glass account admin is separate)
+    member_of: ["dev-workspace-admins", "prd-workspace-admins", "metastore-admins"]
+    members: []
+  governance-admin:
+    description: Owns tag taxonomy, masking functions and ABAC policies
+    member_of: ["governance-admins"]
+    members: []
+  monitoring-admin:
+    description: Reads cost, audit and usage telemetry
+    member_of: ["platform-monitoring"]
+    members: []
+
+# Platform groups (not per domain). workspaces: env -> USER | ADMIN
+platform_groups:
+  account-admins:        { description: "Break-glass Databricks account admins", workspaces: { dev: ADMIN, prd: ADMIN } }
+  metastore-admins:      { description: "Unity Catalog metastore admins (includes the Terraform SP)", workspaces: { dev: USER, prd: USER } }
+  dev-workspace-admins:  { description: "Workspace admins for dev", workspaces: { dev: ADMIN } }
+  prd-workspace-admins:  { description: "Workspace admins for prd", workspaces: { prd: ADMIN } }
+  governance-admins:     { description: "Tag taxonomy, masking functions, ABAC policies", workspaces: { dev: USER, prd: USER } }
+  platform-monitoring:   { description: "Cost, usage, audit telemetry readers", workspaces: { dev: USER, prd: USER } }
+  sandbox-users:         { description: "Personal sandbox schemas in dev_sandbox", workspaces: { dev: USER } }
+  prd-experimenters:     { description: "Members of approved prd_sandbox experiments", workspaces: { prd: USER } }

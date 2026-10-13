@@ -1,0 +1,16 @@
+# Separation of duties, enforced by branch protection ("Require review from Code Owners").
+# Replace the team handles with your own GitHub teams or usernames.
+
+*                                   @your-github-org/platform-team
+
+# Governance: tag taxonomy, masking functions, ABAC policies
+/config/governed_tags.yaml          @your-github-org/governance-team
+/sql/governance/                    @your-github-org/governance-team
+/stacks/60-governance/              @your-github-org/governance-team
+
+# Access model: who can read what
+/config/access_matrix.yaml          @your-github-org/platform-team @your-github-org/governance-team
+/config/personas.yaml               @your-github-org/platform-team @your-github-org/governance-team
+
+# Production experiments require explicit approval
+/config/experiments.yaml            @your-github-org/platform-leads

@@ -1,0 +1,43 @@
+# -----------------------------------------------------------------------------
+# governed_tags.yaml - account-level tag taxonomy (tag policies).
+# Only listed values can be applied. "assigners" may apply the tag:
+#   "role:<role>" = that role's groups in every env/domain; otherwise a platform group key.
+# Tagging is a security boundary: whoever can set `pii` decides what gets masked.
+# -----------------------------------------------------------------------------
+tags:
+  piq_env:
+    description: Environment of the asset
+    values: [dev, prd]
+    assigners: [governance-admins]
+  piq_domain:
+    description: Owning business domain
+    values: [claims, policy, insurance, sandbox, platform]
+    assigners: [governance-admins]
+  piq_layer:
+    description: Medallion layer of a schema
+    values: [BRONZE, STAGING, SILVER, GOLD, MARTS, REF, AUDIT, AI, SCRATCH, PLATFORM]
+    assigners: [governance-admins]
+  piq_sensitivity:
+    description: Data sensitivity classification
+    values: [public, internal, confidential, pii]
+    assigners: [governance-admins, "role:producer", "role:dbadmin"]
+  pii:
+    description: PII type of a column; drives ABAC column masks
+    values: [ssn, dob, email, phone, name]
+    assigners: [governance-admins, "role:producer", "role:dbadmin"]
+  piq_ai_approved:
+    description: Whether a table may feed vector indexes and agents
+    values: ["true", "false"]
+    assigners: [governance-admins, "role:dbadmin"]
+  piq_owner:
+    description: Owning team or person (free text not allowed; use team mnemonic)
+    values: [claims-data-team, policy-data-team, insurance-data-team, platform-team]
+    assigners: [governance-admins, "role:dbadmin"]
+
+# ABAC column masks: pii tag value -> masking function in {env}_platform.governance
+masks:
+  ssn:   { function: mask_ssn,   description: "***-**-1234" }
+  dob:   { function: mask_dob,   description: "Year only (YYYY-01-01)" }
+  email: { function: mask_email, description: "****@****.com" }
+  phone: { function: mask_phone, description: "***-***-1234" }
+  name:  { function: mask_name,  description: "[REDACTED]" }

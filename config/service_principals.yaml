@@ -1,0 +1,33 @@
+# -----------------------------------------------------------------------------
+# service_principals.yaml - non-human identities. Created in Entra (stack 20),
+# synced to Databricks automatically, assigned to workspaces (stack 30).
+# Authentication: GitHub OIDC federated credentials -> no secrets to rotate.
+# The Terraform SP itself (sp-<prefix>-terraform) is created by bootstrap/.
+# -----------------------------------------------------------------------------
+service_principals:
+  dev-deploy:
+    description: Deploys Asset Bundles to dev; run-as identity for dev jobs
+    member_of: ["dev:*:producer"]
+    workspaces: { dev: USER }
+    github_subjects:                 # repo:<org>/<repo>:environment:<env>
+      - { repo: piq-claims-pipelines,    environment: dev }
+      - { repo: piq-policy-pipelines,    environment: dev }
+      - { repo: piq-insurance-pipelines, environment: dev }
+  prd-deploy:
+    description: Deploys Asset Bundles to prd; the ONLY writer to prd data
+    member_of: ["prd:*:producer"]
+    workspaces: { prd: USER }
+    github_subjects:
+      - { repo: piq-claims-pipelines,    environment: prd }
+      - { repo: piq-policy-pipelines,    environment: prd }
+      - { repo: piq-insurance-pipelines, environment: prd }
+  powerbi:
+    description: Power BI scheduled refresh against prd curated layers
+    member_of: ["prd:*:consumer"]
+    workspaces: { prd: USER }
+    github_subjects: []
+  monitoring:
+    description: Reads system tables for cost and audit exports
+    member_of: ["platform-monitoring"]
+    workspaces: { dev: USER, prd: USER }
+    github_subjects: []

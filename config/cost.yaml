@@ -1,0 +1,13 @@
+# -----------------------------------------------------------------------------
+# cost.yaml - budgets (alert-only) and serverless usage policies (attribution).
+# Databricks budgets notify; they do not suspend compute. Hard stops come from
+# warehouse auto-stop, compute policies and statement timeouts.
+# -----------------------------------------------------------------------------
+budgets:
+  environment_monthly_usd: { dev: 150, prd: 400 }     # whole-workspace budget per env
+  domain_monthly_usd:      { dev: 50,  prd: 150 }     # per env x domain (tag-filtered)
+  ai_gateway_monthly_usd: 100                          # shared Unity AI Gateway budget
+  alert_at_percent: [75, 90, 100]                      # max four alerts per budget
+
+usage_policies:
+  enabled: true      # one serverless usage policy per env x domain, tags piq_env/piq_domain

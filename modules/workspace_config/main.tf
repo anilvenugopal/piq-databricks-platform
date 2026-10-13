@@ -1,0 +1,169 @@
+# =============================================================================
+# modules/workspace_config - settings and WORKSPACE objects for one workspace.
+#
+# Unity Catalog grants decide what data a person may read. These objects decide
+# what compute they may run it on. Both are needed; neither implies the other.
+# =============================================================================
+
+terraform {
+  required_providers {
+    databricks = { source = "databricks/databricks" }
+  }
+}
+
+variable "env" { type = string }
+variable "prefix" { type = string }
+variable "ip_access_list" { type = list(string) }
+variable "role_groups" {
+  description = "role -> list of group names in this env (all data domains); 'sandbox' included"
+  type        = map(list(string))
+}
+variable "admin_group" { type = string }
+variable "warehouses" { type = any }
+variable "cluster_policies" { type = any }
+variable "is_monitoring_home" {
+  description = "true for the workspace that hosts platform views and system-table grants"
+  type        = bool
+}
+variable "monitoring_group" { type = string }
+variable "system_schemas" { type = list(string) }
+
+# -----------------------------------------------------------------------------
+# Workspace settings
+# -----------------------------------------------------------------------------
+resource "databricks_workspace_conf" "this" {
+  custom_config = {
+    "enableTokensConfig"  = false # no personal access tokens: OAuth / Entra only
+    "enableIpAccessLists" = length(var.ip_access_list) > 0
+  }
+}
+
+resource "databricks_ip_access_list" "allow" {
+  count        = length(var.ip_access_list) > 0 ? 1 : 0
+  label        = "${var.prefix}-${var.env}-allow"
+  list_type    = "ALLOW"
+  ip_addresses = var.ip_access_list
+  depends_on   = [databricks_workspace_conf.this]
+}
+
+# New notebooks and queries default to the sandbox catalog, not to whatever
+# catalog the workspace was created with.
+resource "databricks_default_namespace_setting" "this" {
+  namespace {
+    value = "${var.env}_sandbox"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# SQL warehouses (serverless). Shared per env; attribution comes from tags and
+# query history, not from one warehouse per domain.
+# -----------------------------------------------------------------------------
+resource "databricks_sql_endpoint" "this" {
+  for_each                  = var.warehouses
+  name                      = "${var.prefix}-${var.env}-${each.key}"
+  cluster_size              = each.value.size
+  max_num_clusters          = each.value.max_clusters
+  auto_stop_mins            = each.value.auto_stop_mins
+  enable_serverless_compute = true
+  warehouse_type            = "PRO"
+
+  tags {
+    custom_tags {
+      key   = "piq_env"
+      value = var.env
+    }
+    custom_tags {
+      key   = "piq_workload"
+      value = each.key
+    }
+  }
+}
+
+resource "databricks_permissions" "warehouse" {
+  for_each        = var.warehouses
+  sql_endpoint_id = databricks_sql_endpoint.this[each.key].id
+
+  dynamic "access_control" {
+    for_each = distinct(flatten([for r in each.value.CAN_USE : lookup(var.role_groups, r, [])]))
+    content {
+      group_name       = access_control.value
+      permission_level = "CAN_USE"
+    }
+  }
+  dynamic "access_control" {
+    for_each = distinct(concat([var.admin_group], flatten([for r in each.value.CAN_MANAGE : lookup(var.role_groups, r, [])])))
+    content {
+      group_name       = access_control.value
+      permission_level = "CAN_MANAGE"
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Compute policies for the (rare) classic clusters. Users cannot create
+# unrestricted clusters: the default "users" group has no cluster-create
+# entitlement, so a policy with CAN_USE is the only path.
+# -----------------------------------------------------------------------------
+locals {
+  policies = { for k, p in var.cluster_policies : k => p if !(try(p.dev_only, false) && var.env != "dev") }
+}
+
+resource "databricks_cluster_policy" "this" {
+  for_each    = local.policies
+  name        = "${var.prefix}-${var.env}-${each.key}"
+  description = each.value.description
+  definition = jsonencode(merge(
+    {
+      "data_security_mode"           = { type = "allowlist", values = ["USER_ISOLATION", "SINGLE_USER"], defaultValue = "USER_ISOLATION" }
+      "autoscale.max_workers"        = { type = "range", maxValue = each.value.max_workers, defaultValue = 1 }
+      "custom_tags.piq_env"          = { type = "fixed", value = var.env }
+      "custom_tags.piq_domain"       = { type = "unlimited", isOptional = false }
+      "spark_version"                = { type = "unlimited", defaultValue = "auto:latest-lts" }
+      "enable_local_disk_encryption" = { type = "fixed", value = true }
+    },
+    each.value.autotermination_minutes > 0 ? {
+      "autotermination_minutes" = { type = "range", maxValue = each.value.autotermination_minutes, defaultValue = each.value.autotermination_minutes }
+    } : {},
+  ))
+}
+
+resource "databricks_permissions" "policy" {
+  for_each          = local.policies
+  cluster_policy_id = databricks_cluster_policy.this[each.key].id
+
+  dynamic "access_control" {
+    for_each = distinct(flatten([for r in each.value.CAN_USE : lookup(var.role_groups, r, [])]))
+    content {
+      group_name       = access_control.value
+      permission_level = "CAN_USE"
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# System tables: enable schemas and let the monitoring group read them.
+# Done once, from the monitoring-home workspace (system tables are account-wide).
+# -----------------------------------------------------------------------------
+resource "databricks_system_schema" "this" {
+  for_each = var.is_monitoring_home ? toset(var.system_schemas) : toset([])
+  schema   = each.value
+}
+
+resource "databricks_grant" "system_catalog" {
+  count      = var.is_monitoring_home ? 1 : 0
+  catalog    = "system"
+  principal  = var.monitoring_group
+  privileges = ["USE_CATALOG"]
+}
+
+resource "databricks_grant" "system_schema" {
+  for_each   = var.is_monitoring_home ? toset(concat(["billing", "information_schema"], var.system_schemas)) : toset([])
+  schema     = "system.${each.value}"
+  principal  = var.monitoring_group
+  privileges = ["USE_SCHEMA", "SELECT"]
+  depends_on = [databricks_system_schema.this]
+}
+
+output "warehouse_ids" {
+  value = { for k, w in databricks_sql_endpoint.this : k => w.id }
+}

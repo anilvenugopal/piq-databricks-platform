@@ -1,0 +1,6 @@
+command: ["streamlit", "run", "app.py"]
+env:
+  - name: CATALOG
+    value: dev_claims          # override per target in your bundle if needed
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse   # resolved from the app resource declared in databricks.yml

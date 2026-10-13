@@ -1,0 +1,40 @@
+# Asset Bundle for an OBO app. Deployed by sp-piq-<env>-deploy from the domain
+# repo's GitHub Actions (OIDC); never by a human in prd.
+bundle:
+  name: claims-explorer
+
+variables:
+  warehouse_id:
+    description: ID of piq-<env>-bi (terraform output -json warehouse_ids, stack 50)
+  catalog:
+    description: Domain catalog to query
+    default: dev_claims
+
+resources:
+  apps:
+    claims_explorer:
+      name: claims-explorer
+      description: Explore claims gold tables with the viewer's own permissions
+      source_code_path: ./src
+      user_api_scopes:
+        - sql
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-0000000000000000.0.azuredatabricks.net   # piq-dev workspace URL
+    variables:
+      catalog: dev_claims
+  prd:
+    mode: production
+    workspace:
+      host: https://adb-1111111111111111.1.azuredatabricks.net   # piq-prd workspace URL
+    variables:
+      catalog: prd_claims

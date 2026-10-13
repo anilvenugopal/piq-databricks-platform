@@ -1,0 +1,50 @@
+# Access-portal provisioning. An approved access-request issue becomes a PR that
+# edits config/personas.yaml and config/sandbox_users.yaml. Merge, then apply
+# stacks 20 (Entra membership), 30 (account sync) and 40 (sandbox schema).
+# The issue body carries a JSON block written by the portal Worker:
+#   <!-- piq-access {"upn":"jane@corp.com","persona":"data-analyst","sandbox":true} -->
+name: provision-access
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  to-pr:
+    if: github.event.label.name == 'approved' && contains(github.event.issue.labels.*.name, 'access-request')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml
+      - name: Parse request
+        id: req
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          json=$(printf '%s' "$BODY" | sed -n 's/.*<!-- piq-access \(.*\) -->.*/\1/p' | head -1)
+          [ -n "$json" ] || { echo "No piq-access block in issue body"; exit 1; }
+          echo "upn=$(echo "$json" | jq -r .upn)" >> "$GITHUB_OUTPUT"
+          echo "persona=$(echo "$json" | jq -r '.persona // empty')" >> "$GITHUB_OUTPUT"
+          echo "sandbox=$(echo "$json" | jq -r '.sandbox // false')" >> "$GITHUB_OUTPUT"
+      - name: Edit config
+        run: |
+          args="--upn ${{ steps.req.outputs.upn }} --issue ${{ github.event.issue.number }}"
+          [ -n "${{ steps.req.outputs.persona }}" ] && args="$args --persona ${{ steps.req.outputs.persona }}"
+          [ "${{ steps.req.outputs.sandbox }}" = "true" ] && args="$args --sandbox"
+          python3 scripts/provision_access.py $args
+          python3 scripts/validate_config.py
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          branch: access/issue-${{ github.event.issue.number }}
+          title: "Access: ${{ steps.req.outputs.upn }} (issue #${{ github.event.issue.number }})"
+          body: |
+            Closes #${{ github.event.issue.number }}.
+            After merge, apply stacks `20-identity`, `30-account` and `40-unity-catalog` in that order.
+          commit-message: "access: ${{ steps.req.outputs.upn }} via issue #${{ github.event.issue.number }}"

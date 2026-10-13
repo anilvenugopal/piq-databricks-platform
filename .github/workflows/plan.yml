@@ -1,0 +1,47 @@
+# Plans the stacks touched by a pull request and posts the plan as a comment.
+# Read-only: the plan job authenticates with the pull_request OIDC subject.
+name: plan
+
+on:
+  pull_request:
+    paths: ["config/**", "modules/**", "stacks/**", "sql/**"]
+
+permissions:
+  id-token: write       # GitHub OIDC token -> Entra -> sp-<prefix>-terraform
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        stack: [10-foundation, 20-identity, 30-account, 40-unity-catalog, 50-workspace, 55-ai-platform, 60-governance, 70-observability]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8", terraform_wrapper: false }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Plan ${{ matrix.stack }}
+        id: plan
+        run: |
+          ./scripts/tf.sh ${{ matrix.stack }} init -input=false
+          ./scripts/tf.sh ${{ matrix.stack }} plan -input=false -lock=false -no-color -out tfplan | tee plan.txt
+          ./scripts/tf.sh ${{ matrix.stack }} show -no-color tfplan | tail -c 60000 > summary.txt
+      - name: Comment plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = "### Plan: `${{ matrix.stack }}`\n<details><summary>show</summary>\n\n```\n" +
+              fs.readFileSync('summary.txt', 'utf8') + "\n```\n</details>";
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });

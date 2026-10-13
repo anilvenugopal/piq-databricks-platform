@@ -1,0 +1,36 @@
+# -----------------------------------------------------------------------------
+# domains.yaml - business domains. One data domain => one catalog per environment
+# ({env}_{domain}), one storage container, one set of functional groups.
+# Adding a domain = adding an entry here and opening a PR. Nothing else.
+# -----------------------------------------------------------------------------
+domains:
+  claims:
+    description: Claims lifecycle - FNOL, reserves, payments, recoveries
+    owner: claims-data-team@example.com
+    lakebase: false        # true = create a Lakebase project per environment for apps/agents
+    app_space: true        # true = create a Databricks App Space per environment
+  policy:
+    description: Policy administration - quotes, binds, endorsements, renewals
+    owner: policy-data-team@example.com
+    lakebase: false
+    app_space: true
+  insurance:
+    description: Conformed enterprise insurance model across claims and policy
+    owner: insurance-data-team@example.com
+    lakebase: false
+    app_space: true
+
+# Schemas created in every data-domain catalog. "layer" becomes the piq_layer governed tag.
+# "volumes" are managed UC volumes created inside the schema.
+schemas:
+  bronze:  { layer: BRONZE,  comment: "Raw data as landed from source systems", volumes: [landing, documents] }
+  staging: { layer: STAGING, comment: "Cleaned, deduplicated, CDC-resolved" }
+  silver:  { layer: SILVER,  comment: "Conformed business entities" }
+  gold:    { layer: GOLD,    comment: "Analytics-ready aggregates" }
+  marts:   { layer: MARTS,   comment: "Kimball star schemas for BI" }
+  ref:     { layer: REF,     comment: "Reference data, code maps, date dimension" }
+  audit:   { layer: AUDIT,   comment: "Pipeline audit and run logs" }
+  ai:      { layer: AI,      comment: "Agent tools (UC functions), models, vector indexes, eval sets" }
+
+# Reserved names - cannot be used as domain keys.
+reserved: [sandbox, platform, system, main, hive_metastore, samples]

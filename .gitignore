@@ -1,0 +1,10 @@
+.terraform/
+*.tfplan
+tfplan
+*.tfstate
+*.tfstate.*
+crash.log
+.terraform.lock.hcl.bak
+__pycache__/
+.venv/
+.env

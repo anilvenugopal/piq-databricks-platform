@@ -1,0 +1,11 @@
+# -----------------------------------------------------------------------------
+# experiments.yaml - approved prd experiments: prd_sandbox.exp_<name>.
+# Every entry needs an approver and a ticket; validate_config.py enforces it.
+# -----------------------------------------------------------------------------
+experiments: []
+#  - name: loss_ratio_model_v2
+#    description: Compare loss-ratio model features on prd gold
+#    members: [jane.smith@yourtenant.onmicrosoft.com]
+#    approved_by: platform-lead@yourtenant.onmicrosoft.com
+#    ticket: "issue #34"
+#    expires: 2026-12-31

@@ -1,0 +1,37 @@
+# -----------------------------------------------------------------------------
+# access_matrix.yaml - Unity Catalog privileges per LAYER x ROLE.
+# modules/naming expands this into databricks_grants resources.
+# Roles map to Entra groups named {prefix}-{env}-{domain}-{role}.
+# -----------------------------------------------------------------------------
+roles: [producer, consumer, analyst, admin, ai, dbadmin]
+
+# Privilege bundles. These replace Snowflake-style _R/_RW/_RWC access roles:
+# in Unity Catalog you grant privileges directly to groups and they inherit downward.
+bundles:
+  R:   [USE_SCHEMA, SELECT, EXECUTE, READ_VOLUME]
+  RW:  [USE_SCHEMA, SELECT, EXECUTE, READ_VOLUME, MODIFY, WRITE_VOLUME]
+  RWC: [USE_SCHEMA, SELECT, EXECUTE, READ_VOLUME, MODIFY, WRITE_VOLUME,
+        CREATE_TABLE, CREATE_MATERIALIZED_VIEW, CREATE_FUNCTION, CREATE_VOLUME, CREATE_MODEL]
+
+# Catalog-level privileges.
+catalog:
+  every_role: [USE_CATALOG, BROWSE]        # BROWSE = discover metadata without reading data
+  dbadmin:    [ALL_PRIVILEGES, MANAGE]     # domain DB admin: full control, can manage grants
+
+# Schema x role -> bundle. Missing role = no grant.
+matrix:
+  bronze:  { producer: RWC, admin: RWC }
+  staging: { producer: RWC, admin: RWC }
+  silver:  { producer: RWC, consumer: R, analyst: R,  admin: RWC, ai: R }
+  gold:    { producer: RWC, consumer: R, analyst: R,  admin: RWC, ai: R }
+  marts:   { producer: RWC, consumer: R, analyst: RW, admin: RWC, ai: R }
+  ref:     { producer: RWC, consumer: R, analyst: R,  admin: RWC, ai: R }
+  audit:   { admin: R }
+  ai:      { producer: RWC, consumer: R, analyst: R,  admin: RWC, ai: RWC }
+
+# Roles whose prd groups may contain ONLY service principals (enforced by
+# scripts/validate_config.py and a precondition in modules/naming).
+service_principal_only_in_prd: [producer]
+
+# Groups exempt from ABAC PII masking within their own env/domain.
+unmasked_roles: [producer, admin, dbadmin]
