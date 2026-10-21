@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# platform.yaml - the one file you edit first.
+# platform.yaml - the file you edit first.
 # Everything else in the repo derives names, regions and environments from here.
 # -----------------------------------------------------------------------------
 prefix: piq                     # short org mnemonic, lowercase, 2-5 chars
