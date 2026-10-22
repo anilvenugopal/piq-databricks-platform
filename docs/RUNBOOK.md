@@ -169,24 +169,25 @@ your Databricks account.
 
 1. Open `https://accounts.azuredatabricks.net` and sign in as the Global
    Administrator. The first sign-in makes you an **account admin**.
-2. Copy the **Account ID** (top-right menu) into `config/platform.yaml`
-   (`databricks.account_id`), commit and push.
-3. Settings → **Automatic identity management**: confirm it is enabled (default for
-   new accounts).
-4. User management → Service principals → **Add** → search Entra for
-   `sp-piq-terraform` → add it → open it → **Roles** → enable **Account admin**.
-5. Apply **stack 20-identity** now (next phase), then return here for step 6.
-6. Catalog → the regional metastore → **Metastore admin** → set to the group
-   `piq-metastore-admins` (it contains the Terraform SP after stack 20).
+2. Copy the **Account ID** into `config/platform.yaml` (`databricks.account_id`),
+   commit and push. The Account ID is shown in the top-right user menu — click your
+   name/email in the top-right corner and it appears in the dropdown.
+3. **User management** (left sidebar) → **Service principals** tab → **Add service
+   principal** → search for `sp-piq-terraform` → select it → **Add**.
+   Then open it from the list → **Roles** tab → enable **Account admin**.
+4. Apply **stack 20-identity** now (next phase), then return here for step 5.
+5. **Catalog** (left sidebar) → select the metastore (there should be one for your
+   region) → **Metastore admin** → change it to the group `piq-metastore-admins`
+   (this group is created by stack 20, which is why you run that first).
 
-**Verify:** account console → Workspaces lists both workspaces; Catalog shows the
-metastore with admin `piq-metastore-admins`.
+**Verify:** **Workspaces** (left sidebar) lists both `dbw-piq-dev` and `dbw-piq-prd`;
+**Catalog** (left sidebar) shows the metastore with admin set to `piq-metastore-admins`.
 
 ## Phase 5: Identity and account (CI)
 
 ```bash
 ./scripts/tf.sh 20-identity init && ./scripts/tf.sh 20-identity plan -out tfplan && ./scripts/tf.sh 20-identity apply tfplan
-# Phase 4 step 6 now, then:
+# Phase 4 step 5 now, then:
 ./scripts/tf.sh 30-account init && ./scripts/tf.sh 30-account plan -out tfplan && ./scripts/tf.sh 30-account apply tfplan
 ```
 
