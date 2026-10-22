@@ -22,17 +22,83 @@ per use and serverless scales to zero.
      az provider register --namespace $p
    done
    ```
+   > **What this does:** Azure requires you to explicitly "opt in" to each service
+   > before you can create resources with it. `az provider register` tells your
+   > subscription "I want to use this service." It is a one-time step per subscription.
+   > The command is safe to run more than once — re-registering an already-registered
+   > provider is a no-op.
+   >
+   > **How to check it worked:**
+   > ```bash
+   > for p in Microsoft.Databricks Microsoft.Storage Microsoft.Network Microsoft.KeyVault Microsoft.ManagedIdentity; do
+   >   echo "$p: $(az provider show --namespace $p --query registrationState -o tsv)"
+   > done
+   > ```
+   > Every line should print `Registered`. It can take a minute or two; run again if
+   > any still show `Registering`.
+
 4. Install: Azure CLI, Terraform >= 1.6, Databricks CLI, Python 3.11+, git.
    `pip install -r requirements.txt`.
-5. Create the private GitHub repo and push this code. Create GitHub environment
-   **`platform`** with yourself as required reviewer, deployment branch `main`.
-6. Edit `config/platform.yaml`: `tenant_id`, `subscription_id`, `location`,
-   `unique_suffix`, `state.storage_account`, `github.org`, `notifications.ops_email`.
-   Leave `databricks.account_id` as zeros for now.
+
+5. Create the GitHub repository and push this code:
+
+   **a. Create the repo on GitHub:**
+   - Go to [github.com/new](https://github.com/new) (or your GitHub organisation's
+     equivalent).
+   - Name it `piq-databricks-platform` (or whatever you prefer — you will put this
+     name in `config/platform.yaml` later).
+   - Set it to **Private**.
+   - Do **not** initialise it with a README (the repo already has one).
+
+   **b. Push this code to it:**
+   ```bash
+   git remote set-url origin https://github.com/<your-org>/piq-databricks-platform.git
+   git push -u origin main
+   ```
+   Replace `<your-org>` with your GitHub username or organisation name.
+
+   **c. Create the `platform` GitHub Environment:**
+   - On GitHub, open the repo → **Settings** → **Environments** → **New environment**.
+   - Name it exactly `platform` (case-sensitive — this is what the CI workflows reference).
+   - Under **Deployment protection rules**, tick **Required reviewers** and add yourself.
+   - Under **Deployment branches and tags**, select **Selected branches** and add `main`.
+   - Save.
+
+   > **What this does:** The CI `apply` workflow targets the `platform` environment.
+   > GitHub will pause the workflow and ask for your manual approval before it runs
+   > `terraform apply` against production resources. This prevents accidental changes
+   > from a bad commit sneaking straight into apply.
+
+6. Fill in `config/platform.yaml` with your real values. Open the file and replace
+   the placeholder values for these fields:
+
+   | Field | Where to get it |
+   |---|---|
+   | `azure.tenant_id` | Azure portal → search "Tenant properties" → **Tenant ID**. Or run `az account show --query tenantId -o tsv` |
+   | `azure.subscription_id` | Azure portal → your subscription overview → **Subscription ID**. Or run `az account show --query id -o tsv`. Yours is `b821d55b-210b-495c-a345-d2ab5775ad4b` |
+   | `azure.location` | The Azure region where your workspaces will live. Use `eastus2` unless you have a reason to change it (it has the broadest Databricks serverless support). |
+   | `unique_suffix` | Pick any 3–6 lowercase alphanumeric string (e.g. `a1b2`). This is appended to globally-unique resource names like the storage account to avoid name collisions across all Azure customers. |
+   | `state.storage_account` | Must be 3–24 lowercase alphanumerics, globally unique across all Azure. Convention: `st` + your prefix + `tfstate` + your suffix, e.g. `stpiqtfstatea1b2`. You are choosing a name here — the bootstrap step will create this storage account. |
+   | `github.org` | Your GitHub username or organisation name, exactly as it appears in your GitHub URLs (e.g. `avenugopal` or `premiumiq`). |
+   | `notifications.ops_email` | An email address for budget and alert notifications. Use your own for now. |
+   | `databricks.account_id` | Leave as `00000000-0000-0000-0000-000000000000` for now. You fill this in during Phase 4, after the workspaces exist. |
+
+   > **Tip:** the prefix `piq` and the suffix `a1b2` are already in the file as examples.
+   > You can keep them or change them — just keep `prefix` to 2–5 lowercase letters.
 
 **Verify:** `python3 scripts/validate_config.py` prints `Config OK`.
 
 ## Phase 2: Bootstrap (local Terraform, once)
+
+> **What this phase does:** creates three things in Azure/Entra:
+> 1. A **storage account + container** to hold all future Terraform state files remotely
+>    (so CI and your local machine share the same state).
+> 2. A **service principal** (`sp-piq-terraform`) — the identity Terraform uses in CI.
+>    No passwords: it authenticates via GitHub OIDC (a trust relationship).
+> 3. **Role assignments** so that SP can manage resources in your subscription.
+>
+> Bootstrap itself runs locally (as you, not the SP) because the SP doesn't exist yet.
+> Its own state file stays on your machine (`bootstrap/terraform.tfstate`).
 
 ```bash
 cd bootstrap
@@ -42,14 +108,42 @@ terraform apply tfplan
 terraform output github_variables
 ```
 
-Add the three outputs as GitHub **repository variables** (Settings → Secrets and
-variables → Actions → Variables): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_SUBSCRIPTION_ID`. None are secrets.
+> **What `terraform init` does:** downloads the provider plugins (azurerm, azuread)
+> into a local `.terraform/` directory. Safe to run repeatedly.
+>
+> **What `terraform plan` does:** compares the desired state (the `.tf` files) against
+> what currently exists in Azure, and prints a list of changes it *would* make.
+> It does not change anything. Always review the plan before applying.
+>
+> **What `terraform apply` does:** executes the plan — creates/updates/deletes
+> resources in Azure to match the `.tf` files.
 
-Back up `bootstrap/terraform.tfstate` (it is git-ignored). Optionally move it into
-the state container: add `backend "azurerm" {}` to `bootstrap/main.tf`, then
-`terraform init -migrate-state` with the same `-backend-config` values `scripts/tf.sh`
-uses and `key=bootstrap.tfstate`.
+**You do not need to give the SP a password or manually grant it access to GitHub.**
+The bootstrap Terraform sets up **OIDC (OpenID Connect)** — a password-free trust
+relationship between GitHub Actions and Azure. Here is how it works:
+
+- Bootstrap creates `sp-piq-terraform` in Azure (a service principal — think of it
+  as a robot account).
+- It also tells Azure: "trust any GitHub Actions job that runs from the
+  `anilvenugopal/piq-databricks-platform` repository's `platform` environment or a
+  pull request." This trust is the two **federated credentials** you will see on the
+  SP after bootstrap runs.
+- When a CI job runs, GitHub gives it a short-lived token. The job presents that
+  token to Azure, Azure checks the trust rules, and grants the SP's permissions for
+  that job only. No password is ever stored anywhere.
+
+The three values printed by `terraform output github_variables` tell the CI workflow
+*which* SP to authenticate as. Add them as GitHub **repository variables**
+(repo → Settings → Secrets and variables → Actions → **Variables** tab →
+New repository variable): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID`. Use the **Variables** tab, not Secrets — these are
+non-sensitive IDs, not passwords.
+
+**Back up `bootstrap/terraform.tfstate`.** This file lives on your laptop and is
+git-ignored (never committed). It is the only record Terraform has of the bootstrap
+resources it created. If you lose it, Terraform will think those resources don't
+exist and try to create duplicates. Copy it somewhere safe — a personal OneDrive
+folder is fine for now.
 
 **Verify:** in Entra ID → App registrations, `sp-piq-terraform` exists, has two
 federated credentials, and Microsoft Graph API permissions show "Granted".

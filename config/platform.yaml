@@ -3,26 +3,26 @@
 # Everything else in the repo derives names, regions and environments from here.
 # -----------------------------------------------------------------------------
 prefix: piq                     # short org mnemonic, lowercase, 2-5 chars
-unique_suffix: a1b2             # 3-6 lowercase alphanumerics; makes storage/key vault names globally unique
+unique_suffix: av30             # 3-6 lowercase alphanumerics; makes storage/key vault names globally unique
 
 azure:
-  tenant_id: "00000000-0000-0000-0000-000000000000"        # az account show --query tenantId -o tsv
-  subscription_id: "00000000-0000-0000-0000-000000000000"  # az account show --query id -o tsv
+  tenant_id: "4dcbd443-2dae-4065-b806-17d9c7781f58"        # az account show --query tenantId -o tsv
+  subscription_id: "b821d55b-210b-495c-a345-d2ab5775ad4b"  # az account show --query id -o tsv
   location: eastus2             # pick the Azure region closest to you that supports Databricks serverless
 
 databricks:
   # Filled in during RUNBOOK Phase 4, after the first workspace exists.
-  account_id: "00000000-0000-0000-0000-000000000000"
+  account_id: "2935891b-bdae-40f0-a22d-fc75055a1b3d"  
   account_host: https://accounts.azuredatabricks.net
 
 # Terraform remote state, created by bootstrap/. Names must match bootstrap outputs.
 state:
   resource_group: rg-piq-tfstate
-  storage_account: stpiqtfstatea1b2      # 3-24 lowercase alphanumerics, globally unique
+  storage_account: stpiqtfstateav30      # 3-24 lowercase alphanumerics, globally unique
   container: tfstate
 
 github:
-  org: your-github-org
+  org: anilvenugopal
   platform_repo: piq-databricks-platform
 
 identity:
@@ -31,7 +31,7 @@ identity:
   resolve_consumer_leads: false
 
 notifications:
-  ops_email: platform-ops@example.com
+  ops_email: avenugopal@premiumiq.com
 
 environments:
   dev:
