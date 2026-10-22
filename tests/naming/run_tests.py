@@ -114,7 +114,7 @@ check("financial mask exempts financial SAR", "piq-prd-sar-financial-metrics" in
 check("mask condition uses governed tag", pol["condition"] == "has_tag_value('pii', 'ssn')")
 
 sp = n["service_principals"]["deploy:prd:claims"]
-check("deployer trusts its domain repo prd environment", sp["github_subjects"] == ["repo:your-github-org/piq-claims:environment:prd"])
+check("deployer trusts its domain repo prd environment", sp["github_subjects"] == [f"repo:{n['platform']['github']['org']}/piq-claims:environment:prd"])
 check("generated tag values", n["governed_tags"]["piq_product"]["values"] == ["earned_premium", "loss", "loss_ratio"])
 okv, msg = validator(ROOT / "config")
 check("validator accepts committed config", okv, msg)
