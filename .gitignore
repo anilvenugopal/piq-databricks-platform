@@ -3,6 +3,7 @@
 tfplan
 *.tfstate
 *.tfstate.*
+*.tfstate_backup
 crash.log
 .terraform.lock.hcl.bak
 __pycache__/
