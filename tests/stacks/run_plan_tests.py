@@ -91,6 +91,7 @@ mock_provider "azuread" {
   mock_data "azuread_client_config" { defaults = { object_id = "00000000-0000-0000-0000-000000000001" } }
   mock_data "azuread_domains" { defaults = { domains = [{ domain_name = "example.onmicrosoft.com", initial = true }] } }
   mock_data "azuread_service_principal" { defaults = { object_id = "00000000-0000-0000-0000-000000000002" } }
+  mock_data "azuread_user" { defaults = { object_id = "00000000-0000-0000-0000-000000000003" } }
 }
 """,
     "random": 'mock_provider "random" {}\n',
