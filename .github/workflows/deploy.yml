@@ -1,0 +1,135 @@
+# Deploys ONE target: a stack, in one environment, for one scope. Started by hand.
+#
+#   gh workflow run deploy.yml -f stack=40-unity-catalog -f environment=dev -f scope=domain:claims
+#   gh workflow run deploy.yml -f stack=40-unity-catalog -f environment=prd -f scope=domain:claims -f ref=rel-2026.10.23.1
+#
+# Two jobs, so the person who approves reads the same plan that gets applied:
+#   plan   (GitHub environment <env>-plan, no reviewers)  plans, runs the scope check, saves the plan
+#   apply  (GitHub environment <env>; required reviewers on the prod environment)
+#          waits for approval, then applies THAT saved plan, runs the checks, writes the deploy record
+#
+# The promotion gate (scripts/apply.py) refuses a release that has not already been deployed
+# successfully to every environment in promotes_from (config/platform.yaml).
+# Scope shared has no environment: leave `environment` empty; it uses the GitHub environments shared / shared-plan.
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: Stack to deploy
+        required: true
+        type: choice
+        options: [10-foundation, 20-identity, 25-access, 30-account, 40-unity-catalog, 50-workspace, 55-ai-platform, 60-governance, 70-observability]
+      environment:
+        description: Environment (dev, prd, ...). Empty for scope shared
+        required: false
+        type: string
+      scope:
+        description: "Scope: shared | env | access | domain:<name>"
+        required: true
+        type: string
+      ref:
+        description: Git ref to deploy. A release tag (rel-YYYY.MM.DD.N) for environments with promotes_from; any commit otherwise
+        required: true
+        default: main
+        type: string
+      hotfix:
+        description: Hotfix deploy (skips the promotion gate where the environment allows it)
+        required: false
+        default: false
+        type: boolean
+      approver:
+        description: Who approved the hotfix (required with hotfix)
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.stack }}-${{ inputs.environment || 'shared' }}-${{ inputs.scope }}   # never two deploys of the same target
+  cancel-in-progress: false
+
+env:
+  STACK: ${{ inputs.stack }}
+  TARGET_ENV: ${{ inputs.environment }}
+  TARGET_SCOPE: ${{ inputs.scope }}
+  GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'shared' }}-plan
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8", terraform_wrapper: false }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate config
+        run: python3 scripts/validate_config.py
+      - name: Plan ${{ inputs.stack }} ${{ inputs.environment }} ${{ inputs.scope }}
+        run: |
+          args=(--scope "$TARGET_SCOPE" --out "$GITHUB_WORKSPACE/plan.tfplan")
+          [ -n "$TARGET_ENV" ] && args+=(--env "$TARGET_ENV")
+          python3 scripts/plan.py "$STACK" "${args[@]}" | tee plan.txt
+      - name: Show the plan for the approver
+        if: always()
+        run: |
+          {
+            echo "### Plan: \`$STACK\` / \`${TARGET_ENV:-shared}\` / \`$TARGET_SCOPE\` @ \`${{ inputs.ref }}\`"
+            echo '```'
+            tail -c 60000 plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: |
+            plan.tfplan
+            plan.tfplan.json
+            plan.txt
+          retention-days: 7
+
+  apply:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'shared' }}      # required reviewers on the prod environment
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8", terraform_wrapper: false }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: actions/download-artifact@v4
+        with: { name: plan }
+      - name: Apply the reviewed plan
+        run: |
+          args=(--scope "$TARGET_SCOPE" --plan "$GITHUB_WORKSPACE/plan.tfplan" --yes)
+          [ -n "$TARGET_ENV" ] && args+=(--env "$TARGET_ENV")
+          # An environment with promotes_from needs the release tag; the ref IS that tag.
+          case "${{ inputs.ref }}" in rel-*) args+=(--release "${{ inputs.ref }}") ;; esac
+          if [ "${{ inputs.hotfix }}" = "true" ]; then args+=(--hotfix --approver "${{ inputs.approver }}"); fi
+          python3 scripts/apply.py "$STACK" "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audit
+          path: audit/
+          if-no-files-found: ignore

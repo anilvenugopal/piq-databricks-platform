@@ -1,11 +1,13 @@
 # Access-portal provisioning. An approved access-request issue becomes a pull
-# request; CODEOWNERS routes it to the right approver (producing domain for
-# product access, governance for SARs, platform for personas and sandboxes).
-# The portal Worker writes a JSON block into the issue body, for example:
-#   <!-- piq-access {"type":"product","name":"loss_ratio","consumer":"exec_reporting"} -->
-#   <!-- piq-access {"type":"persona","upn":"jane@corp.com","name":"data-analyst"} -->
-#   <!-- piq-access {"type":"sandbox","upn":"jane@corp.com"} -->
-#   <!-- piq-access {"type":"sar","name":"financial_metrics","env":"prd","group":"consumer:exec_reporting:analyst"} -->
+# request that edits config/entitlements/<env>/ (the stand-in for an identity-governance
+# tool); CODEOWNERS routes it to the right approver (producing domain for product access,
+# governance for SARs, platform for personas and sandboxes; stricter for prd).
+# The portal Worker writes a JSON block into the issue body. Every request names its environment:
+#   <!-- piq-access {"type":"product","env":"prd","name":"loss_ratio","consumer":"exec_reporting"} -->
+#   <!-- piq-access {"type":"persona","env":"prd","upn":"jane@corp.com","name":"data-analyst"} -->
+#   <!-- piq-access {"type":"sandbox","env":"dev","upn":"jane@corp.com"} -->
+#   <!-- piq-access {"type":"sar","env":"prd","name":"financial_metrics","group":"consumer:exec_reporting:analyst"} -->
+#   <!-- piq-access {"type":"admin","env":"dev","domain":"claims","upn":"jane@corp.com"} -->
 name: provision-access
 
 on:
@@ -34,7 +36,7 @@ jobs:
           json=$(printf '%s' "$BODY" | sed -n 's/.*<!-- piq-access \(.*\) -->.*/\1/p' | head -1)
           [ -n "$json" ] || { echo "No piq-access block in issue body"; exit 1; }
           args="$(echo "$json" | jq -r '.type')"
-          for k in upn name consumer env group; do
+          for k in env upn name domain consumer group; do
             v=$(echo "$json" | jq -r --arg k "$k" '.[$k] // empty')
             [ -n "$v" ] && args="$args --$k $v"
           done
@@ -48,5 +50,5 @@ jobs:
           body: |
             Closes #${{ github.event.issue.number }}.
             Request: `${{ env.SUMMARY }}`
-            After merge, apply the stacks listed in docs/OPERATIONS.md for this request type.
+            After merge, deploy stack 25-access for that environment (scope access): see docs/OPERATIONS.md.
           commit-message: "access: issue #${{ github.event.issue.number }}"

@@ -1,33 +1,42 @@
-# Thin wrappers. Usage: make plan STACK=40-unity-catalog
+# Thin wrappers. A deployment target is a stack + a scope + (except for scope shared) an environment:
+#   make plan STACK=40-unity-catalog ENV=dev SCOPE=domain:claims
+#   make apply STACK=20-identity SCOPE=shared
+# Scopes: shared | env | access | domain:<name>. See docs/CONCEPTS.md.
 STACK ?= 10-foundation
-STACKS := 10-foundation 20-identity 30-account 40-unity-catalog 50-workspace 55-ai-platform 60-governance 70-observability
+SCOPE ?= env
+ENV   ?=
+ARGS   = $(STACK) --scope $(SCOPE) $(if $(ENV),--env $(ENV))
 
-.PHONY: validate test plan-test fmt init plan apply output all-plan
+.PHONY: validate test plan-test fmt plan apply check status plan-all release
 
 validate:            ## config checks + terraform fmt check
 	python3 scripts/validate_config.py
 	terraform fmt -recursive -check
 
-test:               ## naming module and validator tests (no cloud access needed)
+test:               ## naming, validator and wrapper tests (no cloud access needed)
 	python3 tests/naming/run_tests.py
+	python3 tests/wrappers/run_tests.py
 
-plan-test:          ## mocked plan of every stack (needs provider downloads)
+plan-test:          ## mocked plan of every stack for every target (needs provider downloads)
 	python3 tests/stacks/run_plan_tests.py
 
 fmt:
 	terraform fmt -recursive
 
-init:
-	./scripts/tf.sh $(STACK) init
+plan:               ## plan one target and run the scope check
+	python3 scripts/plan.py $(ARGS)
 
-plan: init
-	./scripts/tf.sh $(STACK) plan -out tfplan
+apply:              ## plan, confirm, apply, check and record one target
+	python3 scripts/apply.py $(ARGS)
 
-apply:
-	./scripts/tf.sh $(STACK) apply tfplan
+check:              ## run the post-apply checks of one target
+	python3 scripts/check.py $(ARGS)
 
-output:
-	./scripts/tf.sh $(STACK) output
+plan-all:           ## plan every target of an environment (read-only): make plan-all ENV=dev
+	python3 scripts/plan_all.py --env $(ENV)
 
-all-plan:
-	@for s in $(STACKS); do echo "== $$s"; ./scripts/tf.sh $$s init -input=false >/dev/null && ./scripts/tf.sh $$s plan -input=false -lock=false || exit 1; done
+status:             ## which release is deployed where
+	python3 scripts/status.py $(if $(ENV),--env $(ENV))
+
+release:            ## cut a release tag on the current commit
+	python3 scripts/release.py

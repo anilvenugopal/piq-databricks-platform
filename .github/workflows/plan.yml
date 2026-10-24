@@ -1,24 +1,39 @@
-# Plans the stacks touched by a pull request and posts the plan as a comment.
-# Read-only: the plan job authenticates with the pull_request OIDC subject.
+# Plans every target of the first nonprod environment and posts what would change, on each pull request.
+# Read-only. Uses the GitHub environment <env>-plan, which has no reviewers.
+# (Plans of the prod environment are made by deploy.yml, where a reviewer sees them before apply.)
 name: plan
 
 on:
   pull_request:
-    paths: ["config/**", "modules/**", "stacks/**", "sql/**"]
+    paths: ["config/**", "modules/**", "stacks/**", "sql/**", "scripts/**", "util/**"]
 
 permissions:
-  id-token: write       # GitHub OIDC token -> Entra -> sp-<prefix>-terraform
+  id-token: write
   contents: read
   pull-requests: write
 
 jobs:
-  plan:
+  which:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        stack: [10-foundation, 20-identity, 30-account, 40-unity-catalog, 50-workspace, 55-ai-platform, 60-governance, 70-observability]
+    outputs:
+      env: ${{ steps.pick.outputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - id: pick
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import yaml
+          envs = yaml.safe_load(open("config/platform.yaml"))["environments"]
+          print("env=" + next(e for e, c in sorted(envs.items()) if c["tier"] == "nonprod"))
+          PY
+
+  plan:
+    needs: which
+    runs-on: ubuntu-latest
+    environment: ${{ needs.which.outputs.env }}-plan
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,17 +46,15 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Plan ${{ matrix.stack }}
+      - name: Plan every target of ${{ needs.which.outputs.env }}
         id: plan
-        run: |
-          ./scripts/tf.sh ${{ matrix.stack }} init -input=false
-          ./scripts/tf.sh ${{ matrix.stack }} plan -input=false -lock=false -no-color -out tfplan | tee plan.txt
-          ./scripts/tf.sh ${{ matrix.stack }} show -no-color tfplan | tail -c 60000 > summary.txt
-      - name: Comment plan
+        continue-on-error: true
+        run: python3 scripts/plan_all.py --env "${{ needs.which.outputs.env }}" --markdown report.md
+      - name: Comment
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const body = "### Plan: `${{ matrix.stack }}`\n<details><summary>show</summary>\n\n```\n" +
-              fs.readFileSync('summary.txt', 'utf8') + "\n```\n</details>";
+            const body = "### Plan against `${{ needs.which.outputs.env }}`\n" +
+              (fs.existsSync('report.md') ? fs.readFileSync('report.md', 'utf8') : "The plan did not run; see the job log.");
             await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });

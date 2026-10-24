@@ -22,6 +22,8 @@ jobs:
         run: terraform fmt -recursive -check
       - name: Naming module tests
         run: python3 tests/naming/run_tests.py
+      - name: Deployment wrapper tests
+        run: python3 tests/wrappers/run_tests.py
       - name: Mocked plan of every stack
         run: python3 tests/stacks/run_plan_tests.py
       - name: Validate every stack

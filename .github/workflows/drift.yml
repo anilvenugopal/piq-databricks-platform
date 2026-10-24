@@ -1,0 +1,57 @@
+# Nightly, plan only: finds changes that nobody merged (someone changed something by hand) and
+# merged changes that were never deployed. It never applies anything.
+# A target with changes fails the job, so you are told. Fix it with deploy.yml for that target.
+name: drift
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  which:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.pick.outputs.envs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - id: pick
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, yaml
+          envs = yaml.safe_load(open("config/platform.yaml"))["environments"]
+          print("envs=" + json.dumps(sorted(envs)))
+          PY
+
+  plan:
+    needs: which
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.which.outputs.envs) }}
+    environment: ${{ matrix.env }}-plan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8", terraform_wrapper: false }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Plan every target of ${{ matrix.env }}
+        run: |
+          python3 scripts/plan_all.py --env "${{ matrix.env }}" --markdown report.md || rc=$?
+          { echo "### Drift report: ${{ matrix.env }}"; cat report.md; } >> "$GITHUB_STEP_SUMMARY"
+          exit "${rc:-0}"

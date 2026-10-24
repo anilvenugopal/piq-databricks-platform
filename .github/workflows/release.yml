@@ -1,0 +1,42 @@
+# Cuts a release: an immutable tag rel-YYYY.MM.DD.N on a commit that passes every check.
+# Only a tagged commit can go to an environment that has promotes_from (config/platform.yaml).
+#
+#   gh workflow run release.yml                 # tags main
+#   gh workflow run release.yml -f ref=<sha>    # tags a specific commit
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or branch to release
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref }}", fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8", terraform_wrapper: false }
+      - name: Checks a release must pass
+        run: |
+          python3 scripts/validate_config.py
+          terraform fmt -recursive -check
+          python3 tests/naming/run_tests.py
+          python3 tests/wrappers/run_tests.py
+          python3 tests/stacks/run_plan_tests.py
+      - name: Tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          python3 scripts/release.py --push --message "Release cut from ${{ inputs.ref }} by ${{ github.actor }}"
