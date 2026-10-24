@@ -37,40 +37,43 @@
 
 ---
 
-## 3. Before you start: tear down and rebuild the environments
+## 3. Before you start: move from the old build
 
-This platform has no real data and no real users, so the environments are rebuilt instead of migrated. Terraform state keys change (`<stack>.tfstate` becomes `<stack>/<env>/<scope>.tfstate`), so the **old** stacks must be destroyed with the **old** code, before the new code is applied.
+This platform has no real data and no real users. Terraform state keys change (`<stack>.tfstate` becomes `<stack>/<env>/<scope>.tfstate`), and Terraform cannot split an old state by itself. So the old build is handled in three parts. The full checklist is RUNBOOK Phase 0.
 
-You keep: the Databricks account, `bootstrap/`, and the state storage account `rg-piq-tfstate`.
+| Part | What | How |
+|---|---|---|
+| **Stays** | The Databricks account, `bootstrap/`, the state storage account `rg-piq-tfstate`, and everything stack 10 built (resource groups, networks, workspaces, storage, Key Vaults) | Nothing about these changed, so nothing is recreated. No Key Vault purge. |
+| **Goes** | Everything stacks 20 to 70 created: Entra groups and service principals, Databricks and Unity Catalog objects, budgets | Destroyed with the **old** code on `main`, stacks 70 down to 20. They hold no data and rebuild in minutes. |
+| **Moves** | Stack 10's one state (both environments) | `scripts/migrate_foundation_state.py` moves each resource with `terraform state mv` into `10-foundation/<env>/env.tfstate`; the real resources are untouched. Its mechanics are tested offline (`tests/migration/run_tests.py`); pushing to the real backend is not. |
 
-### 3.1 Destroy with the old code
-
-Run from `main` (the code before this change), in reverse order:
+### 3.1 Destroy stacks 70 to 20 with the old code
 
 ```bash
 git switch main
-for s in 70-observability 60-governance 55-ai-platform 50-workspace 40-unity-catalog 30-account 20-identity 10-foundation; do
+for s in 70-observability 60-governance 55-ai-platform 50-workspace 40-unity-catalog 30-account 20-identity; do
   ./scripts/tf.sh $s init -input=false && ./scripts/tf.sh $s destroy
 done
 ```
 
-Read each destroy plan before you accept it. Do not destroy `bootstrap/`.
+Read each destroy plan before you accept it. Do not destroy stack 10 or `bootstrap/`.
 
 ### 3.2 Things that catch people out
 
 | Item | What happens | What to do |
 |---|---|---|
-| Key Vault names | A destroyed Key Vault stays reserved. The old code turns on purge protection for `prd` (90 days) and allows purging `dev` (7 days) | Change `unique_suffix` in `config/platform.yaml` (currently `av30`) before rebuilding. Storage account names are freed immediately |
+| Resource groups | The old stack 10 created `rg-piq-<env>`; bootstrap now creates them. They already exist | Import them into bootstrap before its first apply (the migration script prints the commands). Without the import, bootstrap fails with "already exists" |
 | Entra groups and service principals | Recreated with new object IDs | Refresh every GitHub variable that held an ID |
-| Old state files | `<stack>.tfstate` blobs stay in the `tfstate` container | Delete them after the destroy: list blobs with no `/` in the name (`az storage blob list --container-name tfstate --account-name <state account> --auth-mode login --query "[?!contains(name,'/')].name"`) and delete those |
-| Metastore | It lives at account level and survives | In the account console, confirm the metastore is attached to the new workspaces, and set `piq-metastore-admins` (a new group) as metastore admin again |
-| Resource groups | The old stack 10 created `rg-piq-<env>`; bootstrap now creates them | Destroying stack 10 first removes them, so bootstrap can recreate them. Skipping the destroy makes bootstrap fail with "already exists" |
+| Old state files | `<stack>.tfstate` blobs stay in the `tfstate` container | Delete them once the new states plan clean (RUNBOOK Phase 0 step 5) |
+| Metastore | It lives at account level and survives, attached to the existing workspaces | Its admin group `piq-metastore-admins` was destroyed; set the new one as metastore admin again (RUNBOOK Phase 4c) |
+| Clean slate instead | Destroying stack 10 too recreates workspaces and storage | Then Key Vault names stay reserved (prd has purge protection, 90 days): change `unique_suffix` in `config/platform.yaml`. Skip the state migration |
 
 ### 3.3 Rebuild order
 
-1. On the new code, re-run `bootstrap/` (`terraform apply`). It creates the per-environment resource groups and identities.
-2. Create the GitHub environments and variables printed by `terraform output next_steps` and `github_variables`.
-3. Deploy in the order of section 8.
+1. On the new code, split stack 10's state (`scripts/migrate_foundation_state.py --execute`).
+2. Import the resource groups into `bootstrap/`, then apply it. It creates the per-environment identities.
+3. Create the GitHub environments and variables printed by `terraform output next_steps` and `github_variables`.
+4. Deploy in the order of section 8.
 
 ---
 
@@ -82,7 +85,7 @@ Read each destroy plan before you accept it. Do not destroy `bootstrap/`.
 | D2 | Move people and approvals into their own stack now or later? | **Now** (C-6, ADR-025) |
 | D3 | Which environments now? | **dev and prd**, but configuration-driven so more are config only (C-1, ADR-023) |
 | D4 | Branching | `main` only, release tags, no environment branches (ADR-024, ADR-028) |
-| D5 | One Azure subscription or two? | **One for now.** A per-environment subscription is *not* implemented; it would need a config field and the provider settings per environment |
+| D5 | One Azure subscription or two? | **One for now.** A per-environment subscription is *not* implemented; docs/SUBSCRIPTIONS.md describes both models and the path from one to the other |
 
 ---
 

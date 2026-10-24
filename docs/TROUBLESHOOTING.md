@@ -12,7 +12,7 @@ How to read a target: stack + environment + scope, for example `40-unity-catalog
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Bootstrap: `Authorization_RequestDenied` on app role assignment | You are not Global Admin / Privileged Role Admin | Run bootstrap as a Global Administrator |
-| Bootstrap: a resource group "already exists ... needs to be imported" **(cloud, unverified)** | A resource group `rg-<prefix>-<env>` is still there from the old layout, where stack 10 created it | Finish the teardown of the old stack 10 first, or `terraform import` the group into bootstrap |
+| Bootstrap: a resource group "already exists ... needs to be imported" **(cloud, unverified)** | A resource group `rg-<prefix>-<env>` is still there from the old layout, where stack 10 created it | `terraform import` the group into bootstrap (`scripts/migrate_foundation_state.py` prints the commands), or destroy the old stack 10 first |
 | 10-foundation: lookup of resource group `rg-<prefix>-<env>` fails | Bootstrap has not been run for that environment, so the group does not exist | Run `bootstrap/` (it creates one resource group per environment in `platform.yaml`) |
 | 10-foundation: storage account name taken | `unique_suffix` collides globally | Change `unique_suffix` in `platform.yaml` |
 | 10-foundation: Key Vault name in use | Soft-deleted vault from a teardown | `az keyvault purge --name <name>` (dev) or wait out retention, or change `unique_suffix` |

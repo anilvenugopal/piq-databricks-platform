@@ -90,18 +90,25 @@ within an environment run `env` before `domain:*`.
 
 ---
 
-## Phase 0: Tear down an older build (MANUAL, only if you built from the old code)
+## Phase 0: Move from an older build (MANUAL, only if you built from the old code)
 
 Skip this phase on a brand-new subscription. Do it if you already applied the old
 version of this repo (one state per stack, one `sp-piq-terraform`, one `platform`
 GitHub environment).
 
-You keep: `bootstrap/` and its local state, the state storage account
-(`rg-piq-tfstate`), and the Databricks account. You remove: everything the numbered
-stacks created.
+**What stays, what goes, what moves:**
 
-Run this from the **old code**, because the old state files only make sense to the old
-stacks. Check out the commit before this refactor (`efacd2f` is where it started):
+| | What | Why |
+|---|---|---|
+| **Stays** | `bootstrap/` and its local state, the state storage account (`rg-piq-tfstate`), the Databricks account, and everything stack 10 built: resource groups, networks, workspaces, storage accounts, Key Vaults | Nothing about these changed. Keeping them avoids recreating workspaces and a locked Key Vault name. |
+| **Goes** | Everything stacks 20 to 70 created: Entra groups and service principals, Databricks workspace objects, Unity Catalog objects, budgets | They hold no data yet and rebuild in minutes. Persona groups are renamed anyway (`piq-persona-x` becomes `piq-dev-persona-x`). |
+| **Moves** | Stack 10's single state, which holds both environments, is split into one state per environment | The real Azure resources do not change; only the record of them moves (`scripts/migrate_foundation_state.py`). |
+
+Prefer a clean slate? Destroy stack 10 too (add `10-foundation` to the loop in step 1),
+skip steps 3 and 4, and read the Key Vault warning at the end of this phase.
+
+**Step 1 runs from the OLD code**, because the old state files only make sense to the old
+stacks. Check out the commit before this refactor (`efacd2f`):
 
 ```bash
 git switch main          # or: git checkout efacd2f   (must not contain scripts/state_key.py)
@@ -110,26 +117,38 @@ az login
 
 Checklist:
 
-1. Destroy the stacks in reverse order, with the old `tf.sh` syntax (no `--scope`):
+1. Destroy stacks 70 down to 20, with the old `tf.sh` syntax (no `--scope`). Leave 10 alone:
    ```bash
-   for s in 70-observability 60-governance 55-ai-platform 50-workspace 40-unity-catalog 30-account 20-identity 10-foundation; do
+   for s in 70-observability 60-governance 55-ai-platform 50-workspace 40-unity-catalog 30-account 20-identity; do
      ./scripts/tf.sh $s init
      ./scripts/tf.sh $s destroy
    done
    ```
    If a destroy stops because something was created by hand (for example a table in a
    catalog), delete that object and run the destroy again. There should be no real
-   data yet.
-2. **Key Vaults stay reserved after destroy.** Azure keeps a deleted Key Vault name for
-   its retention period. The provider is set not to purge on destroy.
-   - dev: purge it, `az keyvault purge --name kv-piq-dev-<suffix>`.
-   - prd: **cannot be purged**. It has purge protection (`purge_protection_enabled` is true
-     for the prod tier, 90 days retention). Change `unique_suffix` in
-     `config/platform.yaml` to a new 3 to 6 character value instead. That also gives
-     new storage account names. Do **not** change `state.storage_account`.
-   See what is waiting with `az keyvault list-deleted -o table`.
-3. Delete the old state files from the state container. The old keys are flat
-   (`<stack>.tfstate`); the new keys have folders, so they do not collide:
+   data yet. The group `piq-metastore-admins` is deleted here; Phase 4c points the
+   metastore admin at its replacement.
+2. Switch to the new code: `git switch refactor/scoped-deploys` (or the branch or commit
+   that contains this runbook), then `pip install -r requirements.txt`.
+3. Split stack 10's state. First a dry run, which changes nothing and prints what moves
+   where and the import commands for step 4:
+   ```bash
+   python3 scripts/migrate_foundation_state.py
+   python3 scripts/migrate_foundation_state.py --execute
+   ```
+   It moves each resource with `terraform state mv` into `10-foundation/<env>/env.tfstate`,
+   refuses to overwrite a state that already has content, stops if any resource belongs to
+   no environment, and leaves the old `10-foundation.tfstate` untouched.
+4. The resource groups are now created by `bootstrap/`, but they already exist. Import
+   them before the first bootstrap apply, using the commands the script printed:
+   ```bash
+   terraform -chdir=bootstrap init
+   terraform -chdir=bootstrap import 'azurerm_resource_group.env["dev"]' /subscriptions/<subscription>/resourceGroups/rg-piq-dev
+   terraform -chdir=bootstrap import 'azurerm_resource_group.env["prd"]' /subscriptions/<subscription>/resourceGroups/rg-piq-prd
+   ```
+   Then continue with Phase 2. Bootstrap must not plan to create or change these groups.
+5. After Phase 3 shows stack 10 planning with **no changes** in each environment, delete
+   the old flat state blobs:
    ```bash
    ACCOUNT=$(python3 scripts/config_value.py state.storage_account)
    for s in 10-foundation 20-identity 30-account 40-unity-catalog 50-workspace 55-ai-platform 60-governance 70-observability; do
@@ -137,23 +156,31 @@ Checklist:
        --auth-mode login --name "$s.tfstate"
    done
    ```
-4. Switch to the new code: `git switch refactor/scoped-deploys` (or the branch/commit
-   that contains this runbook), then `pip install -r requirements.txt`.
-5. Remember what comes back with **new identifiers**: every Entra group, every service
-   principal, both workspaces. You will refresh the GitHub variables in Phase 2.
-6. The Unity Catalog **metastore belongs to the Databricks account**, so it survives.
-   After the new workspaces exist (Phase 3), confirm the metastore is attached to them
-   (Phase 4 step 4). This has not been tested against a real account.
+   The old keys are flat (`<stack>.tfstate`); the new keys have folders, so they never collided.
+6. Remember what comes back with **new identifiers**: every Entra group and every service
+   principal of stacks 20 and up. The workspaces keep theirs. You refresh the GitHub
+   variables in Phase 2.
+7. The Unity Catalog **metastore belongs to the Databricks account**, so it survives and
+   stays attached to the existing workspaces. Its admin was the group deleted in step 1;
+   Phase 4c sets the new `piq-metastore-admins` as admin. This has not been tested
+   against a real account.
 
 **Verify:**
 ```bash
-az group list --query "[?starts_with(name,'rg-piq')].name" -o tsv        # only rg-piq-tfstate (and rg-piq-<env> only if step 1 did not finish)
-az ad group list --display-name piq- --query "length(@)"                 # 0
-az storage blob list --account-name "$ACCOUNT" --container-name tfstate --auth-mode login --query "[].name" -o tsv   # no <stack>.tfstate left
+az group list --query "[?starts_with(name,'rg-piq')].name" -o tsv        # rg-piq-tfstate, rg-piq-dev, rg-piq-prd
+az ad group list --display-name piq- --query "length(@)"                 # 0 (nothing from stacks 20 and up is left)
+az storage blob list --account-name "$ACCOUNT" --container-name tfstate --auth-mode login \
+  --prefix 10-foundation/ --query "[].name" -o tsv                       # dev/env.tfstate and prd/env.tfstate
 ```
-In the Databricks account console, **Workspaces** is empty. The old resource groups
-`rg-piq-dev` and `rg-piq-prd` must be gone: bootstrap creates them again in Phase 2
-and would fail on a name that still exists.
+In the Databricks account console, the **Workspaces** page still lists both workspaces.
+
+**If you chose the clean slate:** Key Vault names stay reserved after destroy.
+The provider is set not to purge on destroy. dev: `az keyvault purge --name kv-piq-dev-<suffix>`.
+prd: **cannot be purged** (purge protection, 90 days); change `unique_suffix` in
+`config/platform.yaml` instead (that also gives new storage account names; do **not**
+change `state.storage_account`). See what is waiting with `az keyvault list-deleted -o table`.
+The old resource groups `rg-piq-dev` and `rg-piq-prd` must be gone before bootstrap, which creates
+them again.
 
 ## Phase 1: Accounts and tooling (MANUAL, about 1 hour)
 
@@ -264,6 +291,7 @@ and would fail on a name that still exists.
 >    (so CI and your local machine share the same state).
 > 2. One **resource group per environment** (`rg-piq-dev`, `rg-piq-prd`). They are made
 >    here, not by stack 10, so each environment's identity can be limited to its own.
+>    (If you kept the Azure foundation in Phase 0, they already exist: import them first.)
 > 3. A **shared service principal** (`sp-piq-terraform`) for scope `shared`, and one
 >    service principal **per environment** (`sp-piq-terraform-dev`, `sp-piq-terraform-prd`).
 >    A service principal is a robot account. None has a password: each authenticates
