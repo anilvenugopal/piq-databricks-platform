@@ -11,7 +11,6 @@ domains:
     description: Claims lifecycle - FNOL, reserves, payments, recoveries
     owner: claims-data-team@example.com
     repo: piq-claims                 # GitHub repo whose CI deploys this domain
-    admins: []                       # UPNs; members of piq-{env}-claims-dbadmin
     anon: true                       # create prd_claims_anon, readable from dev
     lakebase: false
     app_space: true
@@ -19,7 +18,6 @@ domains:
     description: Written and earned premium, policy financial transactions
     owner: policy-financial-team@example.com
     repo: piq-policy-financial
-    admins: []
     anon: false
     lakebase: false
     app_space: true
@@ -27,7 +25,6 @@ domains:
     description: Profitability measures derived from loss and premium products
     owner: profitability-team@example.com
     repo: piq-profitability
-    admins: []
     anon: false
     lakebase: false
     app_space: true

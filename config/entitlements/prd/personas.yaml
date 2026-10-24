@@ -1,0 +1,15 @@
+# -----------------------------------------------------------------------------
+# entitlements/prd/personas.yaml - persona assignments
+# ENTITLEMENTS: who is in which group and which access requests were approved, in prd only.
+# This folder is the stand-in for an identity-governance tool (SailPoint, Saviynt, ...). Only
+# stacks/25-access reads it. Everything else in the repo defines the groups and what they may do.
+# When an IAM tool takes over, delete this folder and stack 25; the group NAMES are the contract.
+# -----------------------------------------------------------------------------
+# <upn>: [persona, ...]   persona = a key of config/personas.yaml, or <domain>/<persona> for a
+# domain persona declared in config/domain_shape/<domain>.yaml. Each UPN must exist in Entra ID.
+users:
+  avenugopal@premiumiq.com: [platform-admin]
+  mrinne@premiumiq.com: [platform-admin]
+  bbailey@premiumiq.com: [platform-admin]
+  gcoppola@premiumiq.com: [platform-admin]
+  sparal@premiumiq.com: [platform-admin]

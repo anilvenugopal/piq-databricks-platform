@@ -9,7 +9,7 @@
 tags:
   piq_env:
     description: Environment of the asset
-    values: [dev, prd]
+    values: generated                # every environment in platform.yaml
     assigners: [mesh-governance]
   piq_domain:
     description: Owning domain

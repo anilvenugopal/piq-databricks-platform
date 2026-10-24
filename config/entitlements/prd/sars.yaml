@@ -1,0 +1,12 @@
+# -----------------------------------------------------------------------------
+# entitlements/prd/sars.yaml - sensitive access role members
+# ENTITLEMENTS: who is in which group and which access requests were approved, in prd only.
+# This folder is the stand-in for an identity-governance tool (SailPoint, Saviynt, ...). Only
+# stacks/25-access reads it. Everything else in the repo defines the groups and what they may do.
+# When an IAM tool takes over, delete this folder and stack 25; the group NAMES are the contract.
+# -----------------------------------------------------------------------------
+# <sar>: [group references]   added by pull request after governance approval.
+#   "consumer:<consumer>:<role>"   a consumer group (prod environment only)
+#   "<env>:<domain>:<role>"        a domain local role in this environment
+members:
+  financial_metrics: ["consumer:exec_reporting:analyst"]

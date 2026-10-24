@@ -5,4 +5,3 @@ products:
     description: Earned premium by policy, coverage and period
     contract: docs/contracts/earned_premium.md
     status: published
-    consumers: [profitability, exec_reporting]

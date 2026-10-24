@@ -5,4 +5,3 @@ products:
     description: Loss ratio by line, state and accident year, from Loss and Earned premium
     contract: docs/contracts/loss_ratio.md
     status: published
-    consumers: [exec_reporting]

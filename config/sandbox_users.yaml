@@ -1,8 +1,0 @@
-# -----------------------------------------------------------------------------
-# sandbox_users.yaml - personal dev schemas: dev_sandbox.u_<localpart>.
-# Written by the access portal flow (scripts/provision_access.py) through a PR.
-# Each user must exist in Entra ID. Removing a line drops the schema on apply.
-# -----------------------------------------------------------------------------
-users: []
-#  - upn: jane.smith@yourtenant.onmicrosoft.com
-#    requested_via: "issue #12"

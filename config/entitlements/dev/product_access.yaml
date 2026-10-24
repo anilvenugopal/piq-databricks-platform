@@ -1,0 +1,13 @@
+# -----------------------------------------------------------------------------
+# entitlements/dev/product_access.yaml - approved consumers per product
+# ENTITLEMENTS: who is in which group and which access requests were approved, in dev only.
+# This folder is the stand-in for an identity-governance tool (SailPoint, Saviynt, ...). Only
+# stacks/25-access reads it. Everything else in the repo defines the groups and what they may do.
+# When an IAM tool takes over, delete this folder and stack 25; the group NAMES are the contract.
+# -----------------------------------------------------------------------------
+# <product>: [domain or consumer domain, ...]   the producing domain approves via pull request.
+# A consumer domain (config/consumers/) can only be approved in the prod environment.
+products:
+  loss: [profitability]
+  earned_premium: [profitability]
+  loss_ratio: []

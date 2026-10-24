@@ -7,6 +7,13 @@
 # Local roles of a producer domain: piq-{env}-{domain}-{role}
 roles: [producer, analyst, ai, dbadmin]
 
+# A bundle value in the tables below may differ by tier, for example
+#   reporting: { analyst: { nonprod: RW, prod: R } }
+# A plain value (analyst: RW) applies to every environment.
+# Per-domain overrides (config/domain_access/<domain>.yaml) can never exceed override_ceiling.
+bundle_order: [R, RW, RWC, O]
+override_ceiling: RWC
+
 # Privilege bundles. O is the grantable equivalent of ownership; the real owner
 # of every catalog stays the Terraform service principal.
 bundles:
@@ -50,16 +57,17 @@ vault:
     raw_vault:           { loader: RWC, engineer: R, domain_producer: R, domain_ai: R }
     business_vault_core: { loader: RWC, engineer: R, domain_producer: R, domain_ai: R }
     admin:               { loader: RWC, engineer: R }
-  # Vault engineers build loaders in dev, so they write there.
+  # Vault engineers build loaders in nonprod environments, so they write there.
+  # Keys are tiers (nonprod | prod), not environment names.
   overrides:
-    dev: { engineer: RWC }
+    nonprod: { engineer: RWC }
 
 # Consumer prep catalogs ({env}_{consumer}): every consumer group of that domain.
 consumer_prep: RWC
 
-# Anonymized catalogs (prd_{domain}_anon): written by the domain's prd writer
-# group, read from dev by the domain's dev local roles.
-anon: { writer: RWC, dev_readers: R }
+# Anonymized catalogs ({prod env}_{domain}_anon): written by the domain's writer group in the
+# prod environment, read from every nonprod environment by the domain's local roles there.
+anon: { writer: RWC, nonprod_readers: R }
 
-# Roles whose prd groups may contain only service principals.
-service_principal_only_in_prd: [producer]
+# Roles whose groups in the PROD-tier environment may contain only service principals.
+service_principal_only_in_prod: [producer]

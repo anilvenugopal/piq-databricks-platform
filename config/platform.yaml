@@ -33,8 +33,20 @@ identity:
 notifications:
   ops_email: avenugopal@premiumiq.com
 
+# Each environment declares its tier and where releases may come from:
+#   tier           nonprod | prod. Rules (who may write, where consumers and anonymized data live,
+#                  where personal sandboxes are allowed) depend on the tier, never on the name.
+#                  Exactly one environment must be prod.
+#   promotes_from  environments a release must have been deployed to successfully before it may
+#                  go here. Empty = accepts any release. Any number of environments may be listed.
+#   allow_hotfix   true = a release marked as a hotfix may skip promotes_from (named approver required).
+# To add qa, uat or dev2: add an entry here (plus its network block), then add its names to the
+# platform groups in personas.yaml. No code change is needed.
 environments:
   dev:
+    tier: nonprod
+    promotes_from: []
+    allow_hotfix: false
     network:
       vnet_cidr: 10.10.0.0/20
       host_subnet_cidr: 10.10.0.0/22        # "public" subnet in Azure Databricks terms
@@ -47,6 +59,9 @@ environments:
       enforcement_mode: DRY_RUN              # DRY_RUN logs violations, ENFORCED blocks them
       allowed_domains: []
   prd:
+    tier: prod
+    promotes_from: [dev]
+    allow_hotfix: true
     network:
       vnet_cidr: 10.20.0.0/20
       host_subnet_cidr: 10.20.0.0/22

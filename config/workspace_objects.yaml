@@ -28,13 +28,13 @@ cluster_policies:
     CAN_USE: [producer, dbadmin]
     max_workers: 4
     autotermination_minutes: 0
-    dev_only: false
+    nonprod_only: false
   shared-compute:
     description: Standard-access-mode interactive clusters (dev experimentation)
     CAN_USE: [producer, analyst, ai, dbadmin]
     max_workers: 2
     autotermination_minutes: 30
-    dev_only: true
+    nonprod_only: true
 
 vector_search:
   enabled: true
