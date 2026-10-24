@@ -1,102 +1,57 @@
 """
-Post-apply checks for stack 40-unity-catalog.
+Post-apply checks for stack 40-unity-catalog (scopes shared, env, domain:<name>).
 
-Verifies that all expected catalogs exist in the stack outputs and
-that key grants are in place using the Databricks SDK.
-
-Expected catalog names are derived from config/ — adding a domain
-automatically extends the expected set.
+Verifies that every catalog this scope owns exists, that the shared scope created every governed
+tag, and that the local roles of each domain catalog have USE_CATALOG (read through the Databricks SDK).
+Expected values come from the naming module for this scope.
 """
-from util.config_reader import Config
-from util.validation import CheckResult
+from util.databricks_cli import workspace_url
+from util.validation import CheckResult, Context
 
 
-def check_catalogs_present(outputs: dict) -> CheckResult:
-    cfg = Config()
+def check_catalogs_present(outputs: dict, ctx: Context) -> CheckResult:
+    expected = {c["name"] for c in ctx.naming["catalogs"].values()}
+    if not expected:
+        return CheckResult("catalogs_present", "PASS", f"this scope owns no catalogs ({ctx.target.sid})")
     catalogs = outputs.get("catalogs", {})
     if not catalogs:
-        return CheckResult("catalogs_present", "RETRY",
-                           "no catalogs in outputs yet")
-
-    # outputs maps key -> catalog_name string
-    actual_names = set(catalogs.values())
-    expected_names = cfg.expected_catalog_names()
-    missing = expected_names - actual_names
-
+        return CheckResult("catalogs_present", "RETRY", "no catalogs in outputs yet")
+    missing = expected - set(catalogs.values())
     if missing:
         sample = sorted(missing)[:5]
         more = f" (and {len(missing) - 5} more)" if len(missing) > 5 else ""
-        return CheckResult("catalogs_present", "FAIL",
-                           f"missing catalogs: {', '.join(sample)}{more}")
-
-    return CheckResult("catalogs_present", "PASS",
-                       f"{len(actual_names)} catalogs present, all expected names found")
+        return CheckResult("catalogs_present", "FAIL", f"missing catalogs: {', '.join(sample)}{more}")
+    return CheckResult("catalogs_present", "PASS", f"{len(expected)} catalogs present, all expected names found")
 
 
-def check_domain_catalog_grants(outputs: dict) -> CheckResult:
-    """
-    Verify that producer groups have USE_CATALOG on domain catalogs
-    using the Databricks SDK against the prd workspace.
-    """
-    cfg = Config()
-    from databricks.sdk import WorkspaceClient
-    import subprocess, json
+def check_domain_catalog_grants(outputs: dict, ctx: Context) -> CheckResult:
+    """Each domain catalog in this scope: its producer group can use it."""
+    domain_catalogs = [c for c in ctx.naming["catalogs"].values() if c["kind"] == "domain"]
+    if not domain_catalogs:
+        return CheckResult("domain_catalog_grants", "PASS", "no domain catalogs in this scope")
 
-    # Get prd workspace URL from foundation stack output
-    result = subprocess.run(
-        ["databricks", "account", "workspaces", "list",
-         "--profile", "premiumIQ", "-o", "json"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
-    if result.returncode != 0:
-        return CheckResult("domain_catalog_grants", "RETRY",
-                           "could not reach Databricks account API")
-
-    workspaces = json.loads(result.stdout)
-    prd_ws = next(
-        (w for w in workspaces
-         if w.get("workspace_name") == f"dbw-{cfg.prefix}-prd"), None
-    )
-    if not prd_ws:
-        return CheckResult("domain_catalog_grants", "FAIL",
-                           f"dbw-{cfg.prefix}-prd not found in workspace list")
-
-    host = prd_ws.get("deployment_name", "")
-    if not host:
-        return CheckResult("domain_catalog_grants", "FAIL",
-                           "prd workspace has no deployment_name")
-
-    ws_url = f"https://{host}.azuredatabricks.net"
+    url = workspace_url(f"dbw-{ctx.prefix}-{ctx.env}")
+    if not url:
+        return CheckResult("domain_catalog_grants", "RETRY", "could not determine the workspace URL (account API not reachable?)")
     try:
-        w = WorkspaceClient(host=ws_url)
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient(host=url)
     except Exception as e:
         return CheckResult("domain_catalog_grants", "RETRY", f"SDK init failed: {e}")
 
     failures = []
-    for domain in cfg.domains:
-        catalog_name = f"prd_{domain}"
-        producer_group = f"{cfg.prefix}-prd-{domain.replace('_', '-')}-producer"
+    for c in domain_catalogs:
+        group = ctx.naming["all_group_names"][f"{ctx.env}:{c['owner']}:producer"]
         try:
-            grants = w.grants.get_effective(
-                securable_type="CATALOG", full_name=catalog_name,
-                principal=producer_group,
-            )
-            privileges = {
-                p.privilege.value
-                for a in (grants.privilege_assignments or [])
-                for p in (a.privileges or [])
-            }
+            grants = w.grants.get_effective(securable_type="CATALOG", full_name=c["name"], principal=group)
+            privileges = {p.privilege.value for a in (grants.privilege_assignments or []) for p in (a.privileges or [])}
             if "USE_CATALOG" not in privileges:
-                failures.append(
-                    f"{producer_group} missing USE_CATALOG on {catalog_name}"
-                )
+                failures.append(f"{group} missing USE_CATALOG on {c['name']}")
         except Exception as e:
-            failures.append(f"{catalog_name}: {e}")
-
+            failures.append(f"{c['name']}: {e}")
     if failures:
         return CheckResult("domain_catalog_grants", "FAIL", "; ".join(failures))
-    return CheckResult("domain_catalog_grants", "PASS",
-                       f"producer groups have USE_CATALOG on all {len(cfg.domains)} domain catalogs")
+    return CheckResult("domain_catalog_grants", "PASS", f"producer groups have USE_CATALOG on {len(domain_catalogs)} domain catalog(s)")
 
 
 CHECKS = [

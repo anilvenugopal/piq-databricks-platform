@@ -1,7 +1,7 @@
 # =============================================================================
 # 10-foundation - Azure resources per environment.
 #
-#   rg-<prefix>-<env>                 resource group
+#   rg-<prefix>-<env>                 resource group (created by bootstrap/, used here)
 #   vnet-<prefix>-<env>               VNet with two delegated subnets (VNet injection)
 #   dbw-<prefix>-<env>                Azure Databricks workspace, Premium, no public IPs
 #   st<prefix><env><suffix>           ADLS Gen2 account; one container per catalog
@@ -9,18 +9,38 @@
 #   kv-<prefix>-<env>-<suffix>        Key Vault for secrets that cannot use OIDC
 #
 # Creating the FIRST Premium workspace creates the Databricks account itself.
+#
+# One run deploys ONE environment (scope env). State: 10-foundation/<env>/env.tfstate.
 # =============================================================================
 
+variable "environment" {
+  description = "Environment to deploy (a key of environments in config/platform.yaml)"
+  type        = string
+}
+
+variable "scope" {
+  description = "Scope of this run; this stack only has the env scope"
+  type        = string
+  default     = "env"
+  validation {
+    condition     = var.scope == "env"
+    error_message = "10-foundation only supports scope env."
+  }
+}
+
 module "naming" {
-  source     = "../../modules/naming"
-  config_dir = "${path.root}/../../config"
+  source      = "../../modules/naming"
+  config_dir  = "${path.root}/../../config"
+  environment = var.environment
+  scope       = var.scope
 }
 
 locals {
   p      = module.naming.platform
   prefix = module.naming.prefix
-  envs   = module.naming.environments
+  envs   = { for e, c in module.naming.environments : e => c if e == var.environment }
   sfx    = local.p.unique_suffix
+  prod   = { for e in keys(local.envs) : e => module.naming.env_tier[e] == "prod" }
 
   # One container per catalog (vault, domains, consumer prep, anonymized, platform, sandbox).
   containers = { for item in flatten([
@@ -33,11 +53,11 @@ locals {
   env_tags  = { for env in keys(local.envs) : env => merge(local.base_tags, { piq_env = env }) }
 }
 
-resource "azurerm_resource_group" "env" {
+# The resource group is created by bootstrap/ (so the environment's Terraform identity can be
+# limited to it); this stack only looks it up.
+data "azurerm_resource_group" "env" {
   for_each = local.envs
   name     = "rg-${local.prefix}-${each.key}"
-  location = local.p.azure.location
-  tags     = local.env_tags[each.key]
 }
 
 # -----------------------------------------------------------------------------
@@ -47,8 +67,8 @@ resource "azurerm_resource_group" "env" {
 resource "azurerm_virtual_network" "env" {
   for_each            = local.envs
   name                = "vnet-${local.prefix}-${each.key}"
-  location            = azurerm_resource_group.env[each.key].location
-  resource_group_name = azurerm_resource_group.env[each.key].name
+  location            = data.azurerm_resource_group.env[each.key].location
+  resource_group_name = data.azurerm_resource_group.env[each.key].name
   address_space       = [each.value.network.vnet_cidr]
   tags                = local.env_tags[each.key]
 }
@@ -56,8 +76,8 @@ resource "azurerm_virtual_network" "env" {
 resource "azurerm_network_security_group" "env" {
   for_each            = local.envs
   name                = "nsg-${local.prefix}-${each.key}-dbw"
-  location            = azurerm_resource_group.env[each.key].location
-  resource_group_name = azurerm_resource_group.env[each.key].name
+  location            = data.azurerm_resource_group.env[each.key].location
+  resource_group_name = data.azurerm_resource_group.env[each.key].name
   tags                = local.env_tags[each.key]
   # Rules are added and maintained by Azure Databricks (network_security_group_rules_required).
 }
@@ -72,7 +92,7 @@ locals {
 resource "azurerm_subnet" "dbw" {
   for_each             = local.subnets
   name                 = "snet-${local.prefix}-${each.value.env}-${each.value.kind}"
-  resource_group_name  = azurerm_resource_group.env[each.value.env].name
+  resource_group_name  = data.azurerm_resource_group.env[each.value.env].name
   virtual_network_name = azurerm_virtual_network.env[each.value.env].name
   address_prefixes     = [each.value.cidr]
 
@@ -99,8 +119,8 @@ resource "azurerm_subnet_network_security_group_association" "dbw" {
 resource "azurerm_public_ip" "nat" {
   for_each            = local.nat_envs
   name                = "pip-${local.prefix}-${each.key}-nat"
-  location            = azurerm_resource_group.env[each.key].location
-  resource_group_name = azurerm_resource_group.env[each.key].name
+  location            = data.azurerm_resource_group.env[each.key].location
+  resource_group_name = data.azurerm_resource_group.env[each.key].name
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.env_tags[each.key]
@@ -109,8 +129,8 @@ resource "azurerm_public_ip" "nat" {
 resource "azurerm_nat_gateway" "env" {
   for_each            = local.nat_envs
   name                = "ng-${local.prefix}-${each.key}"
-  location            = azurerm_resource_group.env[each.key].location
-  resource_group_name = azurerm_resource_group.env[each.key].name
+  location            = data.azurerm_resource_group.env[each.key].location
+  resource_group_name = data.azurerm_resource_group.env[each.key].name
   sku_name            = "Standard"
   tags                = local.env_tags[each.key]
 }
@@ -133,8 +153,8 @@ resource "azurerm_subnet_nat_gateway_association" "dbw" {
 resource "azurerm_databricks_workspace" "env" {
   for_each                              = local.envs
   name                                  = "dbw-${local.prefix}-${each.key}"
-  location                              = azurerm_resource_group.env[each.key].location
-  resource_group_name                   = azurerm_resource_group.env[each.key].name
+  location                              = data.azurerm_resource_group.env[each.key].location
+  resource_group_name                   = data.azurerm_resource_group.env[each.key].name
   managed_resource_group_name           = "rg-${local.prefix}-${each.key}-dbw-managed"
   sku                                   = "premium"
   public_network_access_enabled         = true # front-end Private Link is a later hardening step
@@ -158,8 +178,8 @@ resource "azurerm_databricks_workspace" "env" {
 resource "azurerm_storage_account" "lake" {
   for_each                        = local.envs
   name                            = substr("st${local.prefix}${each.key}lake${local.sfx}", 0, 24)
-  resource_group_name             = azurerm_resource_group.env[each.key].name
-  location                        = azurerm_resource_group.env[each.key].location
+  resource_group_name             = data.azurerm_resource_group.env[each.key].name
+  location                        = data.azurerm_resource_group.env[each.key].location
   account_tier                    = "Standard"
   account_replication_type        = each.value.storage_replication
   account_kind                    = "StorageV2"
@@ -169,8 +189,8 @@ resource "azurerm_storage_account" "lake" {
   allow_nested_items_to_be_public = false
 
   blob_properties {
-    delete_retention_policy { days = each.key == "prd" ? 30 : 7 }
-    container_delete_retention_policy { days = each.key == "prd" ? 30 : 7 }
+    delete_retention_policy { days = local.prod[each.key] ? 30 : 7 }
+    container_delete_retention_policy { days = local.prod[each.key] ? 30 : 7 }
   }
   tags = local.env_tags[each.key]
 }
@@ -187,8 +207,8 @@ resource "azurerm_storage_container" "catalog" {
 resource "azurerm_databricks_access_connector" "env" {
   for_each            = local.envs
   name                = "ac-${local.prefix}-${each.key}"
-  resource_group_name = azurerm_resource_group.env[each.key].name
-  location            = azurerm_resource_group.env[each.key].location
+  resource_group_name = data.azurerm_resource_group.env[each.key].name
+  location            = data.azurerm_resource_group.env[each.key].location
   identity { type = "SystemAssigned" }
   tags = local.env_tags[each.key]
 }
@@ -216,13 +236,13 @@ data "azurerm_client_config" "current" {}
 resource "azurerm_key_vault" "env" {
   for_each                   = local.envs
   name                       = substr("kv-${local.prefix}-${each.key}-${local.sfx}", 0, 24)
-  location                   = azurerm_resource_group.env[each.key].location
-  resource_group_name        = azurerm_resource_group.env[each.key].name
+  location                   = data.azurerm_resource_group.env[each.key].location
+  resource_group_name        = data.azurerm_resource_group.env[each.key].name
   tenant_id                  = local.p.azure.tenant_id
   sku_name                   = "standard"
   rbac_authorization_enabled = true
-  purge_protection_enabled   = each.key == "prd"
-  soft_delete_retention_days = each.key == "prd" ? 90 : 7
+  purge_protection_enabled   = local.prod[each.key]
+  soft_delete_retention_days = local.prod[each.key] ? 90 : 7
   tags                       = local.env_tags[each.key]
 }
 
@@ -234,7 +254,7 @@ output "workspaces" {
     resource_id  = w.id
     workspace_id = w.workspace_id
     url          = "https://${w.workspace_url}"
-    rg           = azurerm_resource_group.env[env].name
+    rg           = data.azurerm_resource_group.env[env].name
   } }
 }
 

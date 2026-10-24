@@ -3,17 +3,11 @@ terraform {
   required_providers {
     databricks = { source = "databricks/databricks", version = "~> 1.137" }
   }
-  backend "azurerm" {} # key = 55-ai-platform.tfstate
+  backend "azurerm" {} # key = 55-ai-platform/<env>/<scope>.tfstate, set by scripts/tf.sh
 }
 
+# One run uses one workspace: the environment's.
 provider "databricks" {
-  alias     = "dev"
-  host      = data.terraform_remote_state.foundation.outputs.workspaces["dev"].url
-  auth_type = "azure-cli"
-}
-
-provider "databricks" {
-  alias     = "prd"
-  host      = data.terraform_remote_state.foundation.outputs.workspaces["prd"].url
+  host      = data.terraform_remote_state.foundation.outputs.workspaces[var.environment].url
   auth_type = "azure-cli"
 }

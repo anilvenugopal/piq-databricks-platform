@@ -1,7 +1,9 @@
 # =============================================================================
 # modules/uc_environment - Unity Catalog objects for ONE environment.
 #
-# Called once per environment with that environment's WORKSPACE-level provider.
+# Called once per run with that environment's WORKSPACE-level provider. The run's scope
+# decides which catalogs it receives: the env scope also creates the environment's one
+# storage credential; a domain scope only points at it by name.
 # Catalogs, credentials and external locations are created ISOLATED through
 # that workspace, so Unity Catalog binds them to it. Catalogs that list
 # readonly_envs (prd_{domain}_anon) also get a READ_ONLY binding to those
@@ -24,15 +26,28 @@ variable "workspace_ids" {
   description = "env -> workspace id, for read-only bindings into other environments"
   type        = map(string)
 }
-variable "access_connector_id" { type = string }
+variable "access_connector_id" {
+  description = "Only used when create_credential is true"
+  type        = string
+  default     = ""
+}
+variable "create_credential" {
+  description = "true in the env scope, which owns the environment's one storage credential; domain runs only refer to it by name"
+  type        = bool
+}
 variable "storage_account_name" { type = string }
 variable "catalogs" { type = any }       # naming.catalogs filtered to this env
 variable "catalog_grants" { type = any } # naming.catalog_grants (all envs)
 variable "schemas" { type = any }        # naming.schemas filtered to this env
 variable "volumes" { type = any }        # naming.volumes filtered to this env
 
+locals {
+  credential_name = "${var.env}_lake_credential"
+}
+
 resource "databricks_storage_credential" "lake" {
-  name    = "${var.env}_lake_credential"
+  count   = var.create_credential ? 1 : 0
+  name    = local.credential_name
   comment = "Access connector for ${var.env} lake storage. Managed by terraform."
   azure_managed_identity {
     access_connector_id = var.access_connector_id
@@ -46,7 +61,7 @@ resource "databricks_external_location" "catalog" {
   for_each        = var.catalogs
   name            = "${each.value.name}_root"
   url             = "abfss://${each.value.container}@${var.storage_account_name}.dfs.core.windows.net/"
-  credential_name = databricks_storage_credential.lake.id
+  credential_name = var.create_credential ? databricks_storage_credential.lake[0].id : local.credential_name
   comment         = "Managed storage root for catalog ${each.value.name}"
   isolation_mode  = "ISOLATION_MODE_ISOLATED"
 }

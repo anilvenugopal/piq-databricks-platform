@@ -3,7 +3,7 @@ terraform {
   required_providers {
     databricks = { source = "databricks/databricks", version = "~> 1.137" }
   }
-  backend "azurerm" {} # key = 40-unity-catalog.tfstate
+  backend "azurerm" {} # key = 40-unity-catalog/<shared|<env>/<scope>>.tfstate, set by scripts/tf.sh
 }
 
 locals {
@@ -17,16 +17,9 @@ provider "databricks" {
   auth_type  = "azure-cli"
 }
 
-# Workspace-level providers. Unity Catalog APIs are workspace-scoped; which
-# workspace you call through determines the binding of ISOLATED objects.
+# Workspace-level provider. Unity Catalog APIs are workspace-scoped; which workspace you
+# call through determines the binding of ISOLATED objects. One run uses one workspace.
 provider "databricks" {
-  alias     = "dev"
-  host      = data.terraform_remote_state.foundation.outputs.workspaces["dev"].url
-  auth_type = "azure-cli"
-}
-
-provider "databricks" {
-  alias     = "prd"
-  host      = data.terraform_remote_state.foundation.outputs.workspaces["prd"].url
+  host      = data.terraform_remote_state.foundation.outputs.workspaces[local.home_env].url
   auth_type = "azure-cli"
 }

@@ -3,7 +3,7 @@ terraform {
   required_providers {
     azurerm = { source = "hashicorp/azurerm", version = "~> 5.0" }
   }
-  backend "azurerm" {} # configured by scripts/tf.sh (key = 10-foundation.tfstate)
+  backend "azurerm" {} # configured by scripts/tf.sh (key = 10-foundation/<env>/env.tfstate)
 }
 
 locals {

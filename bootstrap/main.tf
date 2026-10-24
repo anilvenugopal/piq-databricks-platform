@@ -1,10 +1,16 @@
 # =============================================================================
 # bootstrap/ - run ONCE, locally, with your own Azure credentials (az login).
 #
-# Creates the three things CI needs before it can manage anything else:
+# Creates what CI needs before it can manage anything else:
 #   1. Terraform remote-state storage (Entra-auth only, no shared keys)
-#   2. The Terraform identity: Entra app + service principal "sp-<prefix>-terraform"
-#   3. Trust between GitHub Actions and that identity (OIDC federated credentials)
+#   2. One resource group per environment (rg-<prefix>-<env>), so Azure rights can be
+#      limited to it
+#   3. The Terraform identities, with no secrets:
+#        sp-<prefix>-terraform        shared scope and account-wide work
+#        sp-<prefix>-terraform-<env>  one per environment, Azure rights limited to that
+#                                     environment's resource group
+#   4. Trust between GitHub Actions and each identity (OIDC federated credentials), by
+#      GitHub environment name: <env> (apply), <env>-plan (plan), shared, shared-plan
 #
 # State for THIS stack stays local (bootstrap/terraform.tfstate, git-ignored).
 # Keep a copy somewhere safe or migrate it into the state container afterwards
@@ -29,12 +35,19 @@ locals {
   prefix = module.naming.prefix
   repo   = "${local.p.github.org}/${local.p.github.platform_repo}"
 
-  # GitHub OIDC subjects allowed to act as the Terraform SP.
-  # environment:* subjects are used by apply jobs; pull_request by plan jobs.
-  github_subjects = {
-    pull-request = "repo:${local.repo}:pull_request"
-    env-platform = "repo:${local.repo}:environment:platform"
+  env_keys = module.naming.env_keys
+
+  # GitHub OIDC subjects allowed to act as each identity. The shared identity trusts the
+  # GitHub environments shared / shared-plan; an environment's identity trusts <env> / <env>-plan.
+  # The -plan environments have no required reviewers; <env> (apply) does for the prod environment.
+  shared_subjects = {
+    shared      = "repo:${local.repo}:environment:shared"
+    shared-plan = "repo:${local.repo}:environment:shared-plan"
   }
+  env_subjects = merge([for e in local.env_keys : {
+    "${e}"      = { env = e, subject = "repo:${local.repo}:environment:${e}" }
+    "${e}-plan" = { env = e, subject = "repo:${local.repo}:environment:${e}-plan" }
+  }]...)
 
   # Microsoft Graph application permissions the Terraform SP needs.
   graph_roles = concat(
@@ -161,7 +174,7 @@ resource "azurerm_role_assignment" "tf_state" {
 # 3. GitHub OIDC trust - no client secret ever exists for this identity.
 # -----------------------------------------------------------------------------
 resource "azuread_application_federated_identity_credential" "github" {
-  for_each       = local.github_subjects
+  for_each       = local.shared_subjects
   application_id = azuread_application.terraform.id
   display_name   = "github-${each.key}"
   description    = "GitHub Actions: ${each.value}"
@@ -171,14 +184,100 @@ resource "azuread_application_federated_identity_credential" "github" {
 }
 
 # -----------------------------------------------------------------------------
+# 4. Per-environment resource groups and Terraform identities.
+#    The identity of an environment can create and manage resources only inside that
+#    environment's resource group. Entra (Graph) and Databricks account rights cannot be
+#    limited this way, so those stay tenant/account-wide: see docs/ARCHITECTURE.md.
+# -----------------------------------------------------------------------------
+resource "azurerm_resource_group" "env" {
+  for_each = toset(local.env_keys)
+  name     = "rg-${local.prefix}-${each.key}"
+  location = local.p.azure.location
+  tags     = { managed_by = "terraform", platform = local.prefix, piq_env = each.key }
+}
+
+resource "azuread_application" "env" {
+  for_each     = toset(local.env_keys)
+  display_name = "sp-${local.prefix}-terraform-${each.key}"
+  owners       = [data.azuread_client_config.me.object_id]
+  notes        = "Terraform automation identity for the ${each.key} environment of ${local.repo}. Created by bootstrap/."
+
+  required_resource_access {
+    resource_app_id = data.azuread_application_published_app_ids.well_known.result["MicrosoftGraph"]
+    dynamic "resource_access" {
+      for_each = local.graph_roles
+      content {
+        id   = data.azuread_service_principal.msgraph.app_role_ids[resource_access.value]
+        type = "Role"
+      }
+    }
+  }
+}
+
+resource "azuread_service_principal" "env" {
+  for_each  = toset(local.env_keys)
+  client_id = azuread_application.env[each.key].client_id
+  owners    = [data.azuread_client_config.me.object_id]
+}
+
+locals {
+  env_graph_grants = { for item in setproduct(local.env_keys, local.graph_roles) : "${item[0]}|${item[1]}" => { env = item[0], role = item[1] } }
+}
+
+resource "azuread_app_role_assignment" "env_graph" {
+  for_each            = local.env_graph_grants
+  app_role_id         = data.azuread_service_principal.msgraph.app_role_ids[each.value.role]
+  principal_object_id = azuread_service_principal.env[each.value.env].object_id
+  resource_object_id  = data.azuread_service_principal.msgraph.object_id
+}
+
+resource "azurerm_role_assignment" "env_contributor" {
+  for_each             = toset(local.env_keys)
+  scope                = azurerm_resource_group.env[each.key].id
+  role_definition_name = "Contributor"
+  principal_id         = azuread_service_principal.env[each.key].object_id
+}
+
+resource "azurerm_role_assignment" "env_rbac_admin" {
+  for_each             = toset(local.env_keys)
+  scope                = azurerm_resource_group.env[each.key].id
+  role_definition_name = "Role Based Access Control Administrator"
+  principal_id         = azuread_service_principal.env[each.key].object_id
+}
+
+resource "azurerm_role_assignment" "env_state" {
+  for_each             = toset(local.env_keys)
+  scope                = azurerm_storage_account.state.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azuread_service_principal.env[each.key].object_id
+}
+
+resource "azuread_application_federated_identity_credential" "env" {
+  for_each       = local.env_subjects
+  application_id = azuread_application.env[each.value.env].id
+  display_name   = "github-${each.key}"
+  description    = "GitHub Actions: ${each.value.subject}"
+  audiences      = ["api://AzureADTokenExchange"]
+  issuer         = "https://token.actions.githubusercontent.com"
+  subject        = each.value.subject
+}
+
+# -----------------------------------------------------------------------------
 # Outputs: copy these into GitHub repository variables (RUNBOOK Phase 2).
 # -----------------------------------------------------------------------------
 output "github_variables" {
-  description = "Set these as GitHub repository variables (not secrets; none are sensitive)"
+  description = "Set these as GitHub variables on the matching GitHub environment (not secrets; none are sensitive)"
   value = {
-    AZURE_CLIENT_ID       = azuread_application.terraform.client_id
-    AZURE_TENANT_ID       = local.p.azure.tenant_id
-    AZURE_SUBSCRIPTION_ID = local.p.azure.subscription_id
+    shared = {
+      AZURE_CLIENT_ID       = azuread_application.terraform.client_id
+      AZURE_TENANT_ID       = local.p.azure.tenant_id
+      AZURE_SUBSCRIPTION_ID = local.p.azure.subscription_id
+    }
+    by_environment = { for e in local.env_keys : e => {
+      AZURE_CLIENT_ID       = azuread_application.env[e].client_id
+      AZURE_TENANT_ID       = local.p.azure.tenant_id
+      AZURE_SUBSCRIPTION_ID = local.p.azure.subscription_id
+    } }
   }
 }
 
@@ -190,10 +289,22 @@ output "terraform_sp" {
   }
 }
 
+output "env_terraform_sps" {
+  description = "Per-environment Terraform identities: add each as a Databricks ACCOUNT ADMIN (RUNBOOK Phase 4)"
+  value = { for e in local.env_keys : e => {
+    display_name = azuread_application.env[e].display_name
+    client_id    = azuread_application.env[e].client_id
+    sp_object_id = azuread_service_principal.env[e].object_id
+  } }
+}
+
 output "next_steps" {
   value = <<-EOT
-    1. Create GitHub environment "platform" with yourself as required reviewer.
-    2. Add the github_variables above as repository variables.
-    3. Run stack 10-foundation (RUNBOOK Phase 3).
+    1. Create GitHub environments: shared, shared-plan, and for each environment <env> and <env>-plan
+       (required reviewers on the prod environment's apply environment).
+    2. Set the github_variables above on the matching environment (shared -> shared and shared-plan;
+       by_environment.<env> -> <env> and <env>-plan).
+    3. Add every identity in env_terraform_sps and terraform_sp as a Databricks account admin (RUNBOOK Phase 4).
+    4. Run stack 10-foundation for each environment (RUNBOOK Phase 3).
   EOT
 }

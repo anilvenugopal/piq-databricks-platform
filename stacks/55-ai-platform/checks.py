@@ -1,56 +1,38 @@
 """
-Post-apply checks for stack 55-ai-platform.
+Post-apply checks for stack 55-ai-platform (scopes env, domain:<name>).
 
-Verifies that App Space and vector search endpoint names are present in
-the stack outputs for each environment. Expected names are derived from
-config/ — adding a domain automatically extends the expected set.
+Verifies that the App Space of each domain with app_space: true (domain scope) and the Vector Search
+endpoint (env scope, when enabled) are present in the stack outputs.
 
-Note: some features (Lakebase) may be unavailable in private preview
-accounts. Checks cover only resources reflected in the outputs.
+Note: some features (Lakebase) may be unavailable in private preview accounts. Checks cover only
+resources reflected in the outputs.
 """
-from util.config_reader import Config
-from util.validation import CheckResult
+from util.validation import CheckResult, Context
 
 
-def check_app_spaces(outputs: dict) -> CheckResult:
-    cfg = Config()
-    ai = outputs.get("ai", {})
-    if not ai:
+def check_app_spaces(outputs: dict, ctx: Context) -> CheckResult:
+    if not ctx.scope.startswith("domain:"):
+        return CheckResult("app_spaces", "PASS", "app spaces belong to domain scopes")
+    domain = ctx.scope.split(":", 1)[1]
+    if not ctx.naming["domains"].get(domain, {}).get("app_space", False):
+        return CheckResult("app_spaces", "PASS", f"{domain} has app_space: false")
+    spaces = (outputs.get("ai") or {}).get("app_spaces")
+    if spaces is None:
         return CheckResult("app_spaces", "RETRY", "no ai outputs yet")
-
-    failures = []
-    for env in cfg.envs:
-        env_out = ai.get(env, {})
-        app_spaces = env_out.get("app_spaces", {})
-        expected_domains = set(cfg.domains)
-        actual_domains = set(app_spaces.keys())
-        missing = expected_domains - actual_domains
-        if missing:
-            failures.append(
-                f"{env}: missing app spaces for {', '.join(sorted(missing))}"
-            )
-
-    if failures:
-        return CheckResult("app_spaces", "FAIL", "; ".join(failures))
-
-    total = sum(len(ai.get(e, {}).get("app_spaces", {})) for e in cfg.envs)
-    return CheckResult("app_spaces", "PASS",
-                       f"{total} app spaces present across all environments")
+    if domain not in spaces:
+        return CheckResult("app_spaces", "FAIL", f"missing app space for {domain}")
+    return CheckResult("app_spaces", "PASS", f"app space present for {domain}")
 
 
-def check_vector_search(outputs: dict) -> CheckResult:
-    cfg = Config()
-    ai = outputs.get("ai", {})
-    if not ai:
+def check_vector_search(outputs: dict, ctx: Context) -> CheckResult:
+    if ctx.scope != "env" or not ctx.naming["workspace_objects"]["vector_search"]["enabled"]:
+        return CheckResult("vector_search", "PASS", "no Vector Search endpoint expected in this scope")
+    ai = outputs.get("ai")
+    if ai is None:
         return CheckResult("vector_search", "RETRY", "no ai outputs yet")
-
-    missing = [env for env in cfg.envs if not ai.get(env, {}).get("vector_search")]
-    if missing:
-        return CheckResult("vector_search", "FAIL",
-                           f"vector search endpoint missing for: {', '.join(missing)}")
-
-    return CheckResult("vector_search", "PASS",
-                       f"vector search endpoints present for: {', '.join(cfg.envs)}")
+    if not ai.get("vector_search"):
+        return CheckResult("vector_search", "FAIL", f"vector search endpoint missing for {ctx.env}")
+    return CheckResult("vector_search", "PASS", f"vector search endpoint present for {ctx.env}")
 
 
 CHECKS = [

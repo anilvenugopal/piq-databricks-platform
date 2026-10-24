@@ -11,9 +11,33 @@
 # there (except training test users).
 # =============================================================================
 
+# One run owns one scope (see util/scope.py):
+#   shared         cross-environment platform groups, extra SPs spanning environments, test users
+#   env            one environment's groups, vault/SAR/consumer groups, global personas, loaders
+#   domain:<name>  one domain's role/writer/product groups, domain personas, deploy SP
+# People and approvals (who is in which group) are NOT here: they are entitlements, stack 25.
+# State: 20-identity/shared.tfstate or 20-identity/<env>/{env,domain-<name>}.tfstate.
+
+variable "environment" {
+  description = "Environment of this run; unset for scope shared"
+  type        = string
+  default     = null
+}
+
+variable "scope" {
+  description = "shared | env | domain:<name>"
+  type        = string
+  validation {
+    condition     = contains(["shared", "env"], var.scope) || startswith(var.scope, "domain:")
+    error_message = "20-identity supports scopes shared, env and domain:<name>."
+  }
+}
+
 module "naming" {
-  source     = "../../modules/naming"
-  config_dir = "${path.root}/../../config"
+  source      = "../../modules/naming"
+  config_dir  = "${path.root}/../../config"
+  environment = var.environment
+  scope       = var.scope
 }
 
 data "azuread_client_config" "current" {}
@@ -53,30 +77,39 @@ resource "azuread_group" "this" {
   ))
 }
 
-# Group-in-group membership: personas into roles, consumers into products,
-# approved groups into SARs. Child is a member of parent.
+# Group-in-group membership: personas into roles. Child is a member of parent.
+# An edge belongs to the scope of its PARENT, except an edge into a shared group, which
+# belongs to the CHILD's scope. A group owned by another scope (on either side) is found
+# by its display name: that scope was applied earlier.
+locals {
+  nesting_groups = toset(flatten([for n in values(module.naming.nesting) : [n.child, n.parent]]))
+  nesting_ext    = toset([for k in local.nesting_groups : k if !contains(keys(module.naming.groups), k)])
+  sp_groups_ext  = toset([for m in values(module.naming.sp_memberships) : m.group if !contains(keys(module.naming.groups), m.group)])
+  sp_members_ext = toset([for m in values(module.naming.sp_memberships) : m.sp if !contains(keys(module.naming.service_principals), m.sp)])
+}
+
+data "azuread_group" "ext" {
+  for_each         = setunion(local.nesting_ext, local.sp_groups_ext)
+  display_name     = module.naming.all_group_names[each.key]
+  security_enabled = true
+}
+
+locals {
+  group_ids = merge(
+    { for k, g in azuread_group.this : k => g.object_id },
+    { for k, g in data.azuread_group.ext : k => g.object_id },
+  )
+}
+
 resource "azuread_group_member" "nesting" {
   for_each         = module.naming.nesting
-  group_object_id  = azuread_group.this[each.value.parent].object_id
-  member_object_id = azuread_group.this[each.value.child].object_id
-}
-
-# -----------------------------------------------------------------------------
-# People: persona members, domain admins, sandbox users, experiment members.
-# -----------------------------------------------------------------------------
-data "azuread_user" "member" {
-  for_each            = toset(distinct([for m in values(module.naming.user_memberships) : m.upn]))
-  user_principal_name = each.value
-}
-
-resource "azuread_group_member" "user" {
-  for_each         = module.naming.user_memberships
-  group_object_id  = azuread_group.this[each.value.group].object_id
-  member_object_id = data.azuread_user.member[each.value.upn].object_id
+  group_object_id  = local.group_ids[each.value.parent]
+  member_object_id = local.group_ids[each.value.child]
 }
 
 # -----------------------------------------------------------------------------
 # Test users (training only) - sign in as each persona to verify access.
+# The users are shared; which groups they join is access (stack 25).
 # -----------------------------------------------------------------------------
 resource "random_password" "test_user" {
   for_each         = module.naming.test_users
@@ -91,12 +124,6 @@ resource "azuread_user" "test" {
   display_name          = each.value.display_name
   password              = random_password.test_user[each.key].result
   force_password_change = true
-}
-
-resource "azuread_group_member" "test_user" {
-  for_each         = module.naming.test_user_memberships
-  group_object_id  = azuread_group.this[each.value.group].object_id
-  member_object_id = azuread_user.test[each.value.user].object_id
 }
 
 # -----------------------------------------------------------------------------
@@ -133,21 +160,39 @@ resource "azuread_application_federated_identity_credential" "sp" {
   subject        = each.value.subject
 }
 
-resource "azuread_group_member" "sp" {
-  for_each         = module.naming.sp_memberships
-  group_object_id  = azuread_group.this[each.value.group].object_id
-  member_object_id = azuread_service_principal.sp[each.value.sp].object_id
+# An SP owned by another scope is found by its display name.
+data "azuread_service_principal" "ext" {
+  for_each     = local.sp_members_ext
+  display_name = module.naming.all_service_principal_names[each.key]
 }
 
-# The Terraform SP is a metastore admin through piq-metastore-admins
-# (RUNBOOK Phase 4 sets that group as metastore admin).
+resource "azuread_group_member" "sp" {
+  for_each        = module.naming.sp_memberships
+  group_object_id = local.group_ids[each.value.group]
+  member_object_id = contains(keys(module.naming.service_principals), each.value.sp) ? (
+    azuread_service_principal.sp[each.value.sp].object_id
+  ) : data.azuread_service_principal.ext[each.value.sp].object_id
+}
+
+# The Terraform identities (the shared one and one per environment, created by bootstrap/) are
+# metastore admins through piq-metastore-admins (RUNBOOK Phase 4 sets that group as metastore
+# admin). Shared scope only.
+locals {
+  terraform_sps = var.scope == "shared" ? toset(concat(
+    ["sp-${module.naming.prefix}-terraform"],
+    [for e in module.naming.env_keys : "sp-${module.naming.prefix}-terraform-${e}"],
+  )) : toset([])
+}
+
 data "azuread_service_principal" "terraform" {
-  display_name = "sp-${module.naming.prefix}-terraform"
+  for_each     = local.terraform_sps
+  display_name = each.value
 }
 
 resource "azuread_group_member" "terraform_metastore_admin" {
+  for_each         = local.terraform_sps
   group_object_id  = azuread_group.this["platform:metastore-admins"].object_id
-  member_object_id = data.azuread_service_principal.terraform.object_id
+  member_object_id = data.azuread_service_principal.terraform[each.key].object_id
 }
 
 # -----------------------------------------------------------------------------
@@ -163,14 +208,6 @@ output "service_principals" {
     client_id    = s.client_id
     object_id    = s.object_id
   } }
-}
-
-output "users" {
-  description = "UPN -> Entra object id for users referenced by grants"
-  value = merge(
-    { for upn, u in data.azuread_user.member : upn => u.object_id },
-    { for k, u in azuread_user.test : u.user_principal_name => u.object_id },
-  )
 }
 
 output "missing_consumer_leads" {

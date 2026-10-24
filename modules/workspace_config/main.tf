@@ -12,6 +12,14 @@ terraform {
 }
 
 variable "env" { type = string }
+variable "manage_workspace" {
+  description = "true in the env scope: workspace settings, compute policies and system-table grants. A domain scope only receives its own warehouses."
+  type        = bool
+}
+variable "prod" {
+  description = "true when this environment is the prod tier (nonprod-only compute policies are skipped there)"
+  type        = bool
+}
 variable "prefix" { type = string }
 variable "ip_access_list" { type = list(string) }
 variable "role_groups" {
@@ -34,6 +42,7 @@ variable "system_schemas" { type = list(string) }
 # Workspace settings
 # -----------------------------------------------------------------------------
 resource "databricks_workspace_conf" "this" {
+  count = var.manage_workspace ? 1 : 0
   custom_config = {
     "enableTokensConfig"  = false # no personal access tokens: OAuth / Entra only
     "enableIpAccessLists" = length(var.ip_access_list) > 0
@@ -41,7 +50,7 @@ resource "databricks_workspace_conf" "this" {
 }
 
 resource "databricks_ip_access_list" "allow" {
-  count        = length(var.ip_access_list) > 0 ? 1 : 0
+  count        = var.manage_workspace && length(var.ip_access_list) > 0 ? 1 : 0
   label        = "${var.prefix}-${var.env}-allow"
   list_type    = "ALLOW"
   ip_addresses = var.ip_access_list
@@ -51,6 +60,7 @@ resource "databricks_ip_access_list" "allow" {
 # New notebooks and queries default to the sandbox catalog, not to whatever
 # catalog the workspace was created with.
 resource "databricks_default_namespace_setting" "this" {
+  count = var.manage_workspace ? 1 : 0
   namespace {
     value = "${var.env}_sandbox"
   }
@@ -107,7 +117,7 @@ resource "databricks_permissions" "warehouse" {
 # entitlement, so a policy with CAN_USE is the only path.
 # -----------------------------------------------------------------------------
 locals {
-  policies = { for k, p in var.cluster_policies : k => p if !(try(p.dev_only, false) && var.env != "dev") }
+  policies = var.manage_workspace ? { for k, p in var.cluster_policies : k => p if !(try(p.nonprod_only, false) && var.prod) } : {}
 }
 
 resource "databricks_cluster_policy" "this" {
@@ -150,14 +160,14 @@ resource "databricks_permissions" "policy" {
 # Done once, from the monitoring-home workspace (system tables are account-wide).
 # -----------------------------------------------------------------------------
 resource "databricks_grant" "system_catalog" {
-  count      = var.is_monitoring_home ? 1 : 0
+  count      = var.manage_workspace && var.is_monitoring_home ? 1 : 0
   catalog    = "system"
   principal  = var.monitoring_group
   privileges = ["USE_CATALOG"]
 }
 
 resource "databricks_grant" "system_schema" {
-  for_each   = var.is_monitoring_home ? toset(concat(["billing", "information_schema"], var.system_schemas)) : toset([])
+  for_each   = var.manage_workspace && var.is_monitoring_home ? toset(concat(["billing", "information_schema"], var.system_schemas)) : toset([])
   schema     = "system.${each.value}"
   principal  = var.monitoring_group
   privileges = ["USE_SCHEMA", "SELECT"]

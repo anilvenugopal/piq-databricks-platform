@@ -4,7 +4,7 @@ terraform {
     azuread = { source = "hashicorp/azuread", version = "~> 3.0" }
     random  = { source = "hashicorp/random", version = "~> 3.6" }
   }
-  backend "azurerm" {} # key = 20-identity.tfstate
+  backend "azurerm" {} # key = 20-identity/<shared|<env>/<scope>>.tfstate, set by scripts/tf.sh
 }
 
 locals {

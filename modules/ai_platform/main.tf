@@ -16,8 +16,19 @@ terraform {
 }
 
 variable "env" { type = string }
+variable "prod" {
+  description = "true when this environment is the prod tier"
+  type        = bool
+}
+variable "manage_env_objects" {
+  description = "true in the env scope: the Vector Search endpoint. A domain scope only gets its own App Space and Lakebase project."
+  type        = bool
+}
 variable "prefix" { type = string }
-variable "domains" { type = any }
+variable "domains" {
+  description = "The domains this run owns (a single domain in a domain scope, none in the env scope)"
+  type        = any
+}
 variable "usage_policy_ids" {
   description = "usage scope key (env:owner) -> policy id"
   type        = map(string)
@@ -31,14 +42,14 @@ locals {
 }
 
 resource "databricks_vector_search_endpoint" "this" {
-  count            = var.vector_search.enabled ? 1 : 0
+  count            = var.manage_env_objects && var.vector_search.enabled ? 1 : 0
   name             = "${var.prefix}-vs"
   endpoint_type    = "STANDARD"
   budget_policy_id = lookup(var.usage_policy_ids, "${var.env}:platform", null)
 }
 
 resource "databricks_permissions" "vector_search" {
-  count                     = var.vector_search.enabled ? 1 : 0
+  count                     = var.manage_env_objects && var.vector_search.enabled ? 1 : 0
   vector_search_endpoint_id = databricks_vector_search_endpoint.this[0].endpoint_id
 
   dynamic "access_control" {
@@ -73,7 +84,7 @@ resource "databricks_postgres_project" "domain" {
     budget_policy_id = lookup(var.usage_policy_ids, "${var.env}:${each.key}", null)
     default_endpoint_settings = {
       autoscaling_limit_min_cu = 0.5
-      autoscaling_limit_max_cu = var.env == "prd" ? 4 : 1
+      autoscaling_limit_max_cu = var.prod ? 4 : 1
       suspend_timeout_duration = "300s"
     }
     custom_tags = [
@@ -84,7 +95,7 @@ resource "databricks_postgres_project" "domain" {
 }
 
 output "vector_search_endpoint" {
-  value = var.vector_search.enabled ? databricks_vector_search_endpoint.this[0].name : null
+  value = var.manage_env_objects && var.vector_search.enabled ? databricks_vector_search_endpoint.this[0].name : null
 }
 output "app_spaces" {
   value = { for k, s in databricks_app_space.domain : k => s.name }
