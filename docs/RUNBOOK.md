@@ -38,7 +38,13 @@ per use and serverless scales to zero.
    > any still show `Registering`.
 
 4. Install: Azure CLI, Terraform >= 1.6, Databricks CLI, Python 3.11+, git.
-   `pip install -r requirements.txt`.
+   ```bash
+   pip install -r requirements.txt
+   ```
+   > This installs `pyyaml`, `ruamel.yaml`, `databricks-sdk`, and the repo's own
+   > `util` package in editable mode (`-e .`). The `util` package is used by
+   > `scripts/plan.py`, `scripts/apply.py`, and `scripts/check.py`. Run this
+   > command again after pulling changes that add new files to `util/`.
 
 5. Create the GitHub repository and push this code:
 
@@ -151,19 +157,26 @@ federated credentials, and Microsoft Graph API permissions show "Granted".
 ## Phase 3: Foundation (CI)
 
 Run the **apply** workflow with `stack = 10-foundation`, approve the `platform`
-environment. Or locally while learning:
+environment. Or locally:
 
 ```bash
 ./scripts/tf.sh 10-foundation init
-./scripts/tf.sh 10-foundation plan -out tfplan
-./scripts/tf.sh 10-foundation apply tfplan
-./scripts/tf.sh 10-foundation output workspaces
+python3 scripts/apply.py 10-foundation
 ```
+
+`apply.py` runs plan, asks for confirmation, applies, then runs the foundation
+checks (workspace URLs reachable, storage accounts provisioned) and writes an
+audit record to `audit/runs.jsonl`.
 
 Workspace creation takes 5–10 minutes each. The first Premium workspace creates
 your Databricks account.
 
-**Verify:** both workspace URLs open in a browser and you can sign in.
+**Verify:**
+```bash
+python3 scripts/check.py 10-foundation
+```
+Both workspace URLs must be reachable and both storage accounts provisioned.
+Also confirm both workspace URLs open in a browser and you can sign in.
 
 ## Phase 4: Claim the Databricks account (MANUAL, once)
 
@@ -185,36 +198,157 @@ your Databricks account.
 
 ## Phase 5: Identity and account (CI)
 
+### 5a. Add yourself to the platform-admin persona (MANUAL, before running stack 20)
+
+Before applying stack 20, add your Azure user account to the `platform-admin` persona
+in `config/personas.yaml`. This puts you in the `piq-metastore-admins` group, which
+is what gives you MANAGE rights on the Unity Catalog `system` catalog. Without this,
+stack 50 will fail with `User does not have MANAGE on Catalog 'system'`.
+
+**Why the `system` catalog requires this:** `USE_CATALOG` on `system` can only be
+granted by someone with MANAGE on that catalog, which requires metastore admin. Stack
+50 grants `piq-platform-monitoring` `USE_CATALOG` on `system` so that stack 70 can
+read system tables. The grant runs locally as your `az login` session, so *you*
+personally need to be a metastore admin at the time stack 50 runs.
+
+**Your UPN** (the value to add) is the email address you use to log into Azure — the
+same one that appears when you run `az ad signed-in-user show`. Confirm it with:
+
 ```bash
-./scripts/tf.sh 20-identity init && ./scripts/tf.sh 20-identity plan -out tfplan && ./scripts/tf.sh 20-identity apply tfplan
-# Phase 4 step 5 now, then:
-./scripts/tf.sh 30-account init && ./scripts/tf.sh 30-account plan -out tfplan && ./scripts/tf.sh 30-account apply tfplan
+az ad signed-in-user show --query userPrincipalName -o tsv
 ```
+
+Open `config/personas.yaml` and find the `platform-admin` persona. Change its
+`members` list from `[]` to include your UPN:
+
+```yaml
+platform-admin:
+  description: Operates the platform (break-glass account admin is separate)
+  member_of: ["dev-workspace-admins", "prd-workspace-admins", "metastore-admins"]
+  members: ["your-upn@yourdomain.com"]
+```
+
+> **What a UPN is:** User Principal Name — Microsoft's term for the login name of a
+> user in Entra ID. It looks like an email address and is unique across your tenant.
+> Stack 20 uses it to look up your Entra user object and add it to the persona group.
+
+Commit and push this change before running stack 20.
+
+### 5b. Apply stack 20 and complete Phase 4 step 5
+
+```bash
+./scripts/tf.sh 20-identity init
+python3 scripts/apply.py 20-identity
+# Phase 4 step 5 now, then:
+./scripts/tf.sh 30-account init
+python3 scripts/apply.py 30-account
+```
+
+After stack 20 applies, wait approximately one minute before running stack 30 or
+stack 50. Automatic Identity Management (AIM) syncs your Entra group memberships
+into Databricks on a short delay. The stack 20 and stack 30 checks have RETRY
+logic for AIM-dependent assertions — they will wait and recheck automatically.
 
 Get test-user passwords (training only):
 ```bash
 ./scripts/tf.sh 20-identity output -json test_user_credentials
 ```
 
-**Verify:** account console → Groups shows `piq-*` groups as **External**; each
-workspace → Settings → Identity and access lists the functional groups. Sign in to
-the dev workspace as `test.analyst` (you will be asked to change the password).
+**Verify:**
+```bash
+python3 scripts/check.py 20-identity
+python3 scripts/check.py 30-account
+```
+Stack 20 checks: all expected Entra groups present, Terraform SP has OIDC
+credentials, platform-admin persona has members.
+Stack 30 checks: usage policies exist for every env:domain, key groups assigned
+to prd workspace.
+
+---
+
+## Running stacks as sp-piq-terraform (after Phase 4)
+
+After Phase 4, `sp-piq-terraform` is an account admin in Databricks and a member
+of `piq-metastore-admins`. It has all the privileges the platform stacks need. CI
+always runs as this SP. You can also run locally as the SP when you need to test
+exactly what CI will do — for example to reproduce a CI failure, or to apply a stack
+without using your own personal credentials.
+
+**When this is possible:** only after Phase 4 step 3 (the SP is added as Databricks
+account admin) and after stack 20 has run (the SP is added to `piq-metastore-admins`
+in Entra). Before that, the SP lacks the Unity Catalog rights that later stacks need.
+
+**How to do it:** the SP was created with OIDC only — no client secret. To log in
+locally you need to create a temporary client secret in Entra.
+
+1. Find the SP's app registration:
+   ```bash
+   az ad app list --display-name "sp-piq-terraform" --query "[0].appId" -o tsv
+   ```
+
+2. Create a temporary secret (it will be shown once — save it):
+   ```bash
+   az ad app credential reset --id <appId-from-step-1> --append \
+     --display-name "local-dev-temp" --years 1
+   ```
+   This prints `appId`, `password` (the secret), and `tenant`.
+
+3. Log in as the SP:
+   ```bash
+   az login --service-principal \
+     --username <appId> \
+     --password <password> \
+     --tenant <tenantId>
+   ```
+
+4. Run the stack as normal:
+   ```bash
+   python3 scripts/apply.py 50-workspace --yes
+   ```
+   Or using the low-level wrapper:
+   ```bash
+   ./scripts/tf.sh 50-workspace plan -out tfplan
+   ./scripts/tf.sh 50-workspace apply tfplan
+   ```
+
+5. **Clean up the secret when done** — the SP is normally passwordless and the
+   secret is a security downgrade. Delete it from the Azure portal:
+   Entra → App registrations → `sp-piq-terraform` → **Certificates & secrets** →
+   find `local-dev-temp` → delete it.
+   Or via CLI:
+   ```bash
+   # List credential key IDs to find the one to delete
+   az ad app credential list --id <appId> --query "[].{name:displayName, keyId:keyId}"
+   # Delete by key ID
+   az ad app credential delete --id <appId> --key-id <keyId>
+   ```
+
+> **Note:** creating a client secret does not affect the existing OIDC federated
+> credentials that CI uses. They are separate. Deleting the temp secret after use
+> returns the SP to its passwordless state without touching CI.
+
+---
 
 ## Phase 6: Unity Catalog (CI)
 
 ```bash
-./scripts/tf.sh 40-unity-catalog init && ./scripts/tf.sh 40-unity-catalog plan -out tfplan
+./scripts/tf.sh 40-unity-catalog init
+python3 scripts/apply.py 40-unity-catalog
 ```
 
-Read the plan: 14 catalogs (vault, three domains and platform/sandbox per
+The plan covers 14 catalogs (vault, three domains and platform/sandbox per
 environment, plus `prd_exec_reporting` and `prd_claims_anon`), about 74
-schemas, governed tags, grants and bindings.
+schemas, governed tags, grants and bindings. Review the plan diff before
+confirming.
 
+**Verify:**
 ```bash
-./scripts/tf.sh 40-unity-catalog apply tfplan
+python3 scripts/check.py 40-unity-catalog
 ```
+Checks that all expected catalogs exist and that producer groups have
+USE_CATALOG on each domain catalog.
 
-**Verify** (dev workspace SQL editor, as yourself):
+Also verify in the dev workspace SQL editor:
 ```sql
 SHOW CATALOGS;                                  -- dev_* catalogs and prd_claims_anon only
 SHOW SCHEMAS IN dev_claims;                     -- private schemas plus product_loss
@@ -225,29 +359,45 @@ SHOW GRANTS ON CATALOG dev_claims;              -- product groups: USE CATALOG o
 ## Phase 7: Workspace configuration (CI)
 
 ```bash
-./scripts/tf.sh 50-workspace init && ./scripts/tf.sh 50-workspace plan -out tfplan && ./scripts/tf.sh 50-workspace apply tfplan
-./scripts/tf.sh 55-ai-platform init && ./scripts/tf.sh 55-ai-platform plan -out tfplan && ./scripts/tf.sh 55-ai-platform apply tfplan
+./scripts/tf.sh 50-workspace init
+python3 scripts/apply.py 50-workspace
+./scripts/tf.sh 55-ai-platform init
+python3 scripts/apply.py 55-ai-platform
 ```
 
-**Verify:** SQL Warehouses shows `piq-claims-transform`, `piq-policy-financial-transform`,
-`piq-profitability-transform`, `piq-vault-load` and `piq-shared` in both
-workspaces, and `piq-exec-reporting-bi` in prd only. As `test.analyst`, only
-the three domain warehouses are usable. Personal access tokens are unavailable.
+> **Note on stack 55:** some AI platform features (App Spaces, Lakebase) are in
+> private preview and may fail depending on your account's access. Stack 55 is
+> safe to skip for the initial build — stacks 60 and 70 do not depend on it.
+
+**Verify:**
+```bash
+python3 scripts/check.py 50-workspace
+```
+Checks that all warehouses exist in both workspaces and that the monitoring
+group has USE_CATALOG on the system catalog.
+
+Also confirm in the workspace UI: SQL Warehouses shows `piq-claims-transform`,
+`piq-policy-financial-transform`, `piq-profitability-transform`, `piq-vault-load`
+and `piq-shared` in both workspaces, and `piq-exec-reporting-bi` in prd only.
+As `test.analyst`, only the three domain warehouses are usable. Personal access
+tokens are unavailable.
 
 ## Phase 8: Governance and observability (CI)
 
-Stacks 60 and 70 run SQL through `scripts/run_sql.py` on `piq-shared`, so the
-runner needs Python with `databricks-sdk` (CI installs it).
+Stacks 60 and 70 run SQL through `scripts/run_sql.py` on `piq-shared`. The
+`databricks-sdk` required for this is installed by `pip install -r requirements.txt`.
 
 ```bash
-./scripts/tf.sh 60-governance init && ./scripts/tf.sh 60-governance plan -out tfplan && ./scripts/tf.sh 60-governance apply tfplan
-./scripts/tf.sh 70-observability init && ./scripts/tf.sh 70-observability plan -out tfplan && ./scripts/tf.sh 70-observability apply tfplan
+./scripts/tf.sh 60-governance init
+python3 scripts/apply.py 60-governance
+./scripts/tf.sh 70-observability init
+python3 scripts/apply.py 70-observability
 ```
 
-**Verify:**
+**Verify** (SQL editor in either workspace):
 ```sql
-SHOW FUNCTIONS IN dev_platform.governance;   -- mask_ssn, mask_dob, mask_email, mask_phone, mask_name, mask_amount
-SHOW POLICIES ON CATALOG dev_claims;         -- six mask_* policies
+SHOW FUNCTIONS IN dev_platform.governance;        -- mask_ssn, mask_dob, mask_email, mask_phone, mask_name, mask_amount
+SHOW POLICIES ON CATALOG dev_claims;              -- six mask_* policies
 SELECT * FROM prd_platform.governance.products;   -- in prd: loss, earned_premium, loss_ratio
 ```
 

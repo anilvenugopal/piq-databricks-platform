@@ -7,5 +7,7 @@ tfplan
 crash.log
 .terraform.lock.hcl.bak
 __pycache__/
+*.egg-info/
+audit/runs.jsonl
 .venv/
 .env

@@ -31,7 +31,7 @@ personas:
   platform-admin:
     description: Operates the platform (break-glass account admin is separate)
     member_of: ["dev-workspace-admins", "prd-workspace-admins", "metastore-admins"]
-    members: []
+    members: ["avenugopal@premiumiq.com", "mrinne@premiumiq.com", "bbailey@premiumiq.com", "gcoppola@premiumiq.com", "sparal@premiumiq.com"]
   governance-admin:
     description: Owns tag taxonomy, masking functions, ABAC policies and SARs
     member_of: ["mesh-governance"]

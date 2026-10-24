@@ -1,3 +1,5 @@
+-e .
 pyyaml>=6.0
 ruamel.yaml>=0.18
 databricks-sdk>=0.70.0
+

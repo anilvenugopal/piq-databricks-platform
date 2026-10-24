@@ -143,14 +143,12 @@ resource "databricks_permissions" "policy" {
 }
 
 # -----------------------------------------------------------------------------
-# System tables: enable schemas and let the monitoring group read them.
+# System tables: grant the monitoring group access to system schemas.
+# The schemas themselves are MANAGED by Databricks automatically — no resource
+# needed to enable them. databricks_system_schema has a provider bug (both
+# create and import return an empty ID) so we rely on the MANAGED state.
 # Done once, from the monitoring-home workspace (system tables are account-wide).
 # -----------------------------------------------------------------------------
-resource "databricks_system_schema" "this" {
-  for_each = var.is_monitoring_home ? toset(var.system_schemas) : toset([])
-  schema   = each.value
-}
-
 resource "databricks_grant" "system_catalog" {
   count      = var.is_monitoring_home ? 1 : 0
   catalog    = "system"
@@ -163,7 +161,6 @@ resource "databricks_grant" "system_schema" {
   schema     = "system.${each.value}"
   principal  = var.monitoring_group
   privileges = ["USE_SCHEMA", "SELECT"]
-  depends_on = [databricks_system_schema.this]
 }
 
 output "warehouse_ids" {

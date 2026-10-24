@@ -245,7 +245,7 @@ locals {
   # ---------------------------------------------------------------------------
   group_workspace_assignments = merge(
     { for k, g in local.domain_groups : "${k}|${g.env}" => { group = k, env = g.env, permission = "USER" } },
-    { for k, g in local.vault_groups : "${k}|${g.env}" => { group = k, env = g.env, permission = "USER" } if g.role == "engineer" },
+    { for k, g in local.vault_groups : "${k}|${g.env}" => { group = k, env = g.env, permission = "USER" } },
     { for k, g in local.consumer_groups : "${k}|prd" => { group = k, env = "prd", permission = "USER" } },
     merge([for k, g in local.pcfg.platform_groups : {
       for env, perm in g.workspaces : "platform:${k}|${env}" => { group = "platform:${k}", env = env, permission = perm }

@@ -35,6 +35,45 @@ Active Directory), and `databricks` (Databricks API).
 
 ---
 
+## Deployment tooling
+
+Three Python scripts wrap the raw Terraform workflow and add validation and
+auditing. They are the recommended way to apply stacks.
+
+**`scripts/plan.py <stack>`** runs `terraform plan` and writes the plan file to
+`stacks/<stack>/tfplan`. Use it to review what would change before committing to
+an apply. It makes no changes.
+
+**`scripts/apply.py <stack>`** is the full apply workflow: it calls plan, shows
+you the diff, asks for confirmation (or skips it with `--yes` for CI), runs
+`terraform apply`, then immediately runs the stack's validation checks. If checks
+pass it writes a success record to `audit/runs.jsonl`. If they fail it writes a
+failure record and exits non-zero. The audit log gives you a timestamped history
+of every apply and its outcome.
+
+**`scripts/check.py <stack>`** runs only the validation checks for a stack that
+is already deployed. Useful after a config change to confirm nothing drifted, or
+in CI as a scheduled health check.
+
+**`util/`** is the Python package that these scripts and the per-stack checks
+share. It has two modules:
+
+- `util/config_reader.py` — reads `config/` YAML and derives expected names
+  (groups, catalogs, warehouses) using the same rules as the naming module. Checks
+  use this so they automatically stay correct when you add domains, SARs or
+  consumers to config.
+- `util/validation.py` — the `CheckResult` type (`PASS` / `FAIL` / `RETRY`) and
+  the retry runner. A check returning `RETRY` means a known transient condition —
+  the runner waits 15 seconds and tries again, up to 5 times, before converting it
+  to a `FAIL`. This handles AIM sync delays and other eventual-consistency issues
+  without human intervention.
+
+Each stack has its own `stacks/<n>/checks.py` that defines a `CHECKS` list.
+Every function in that list receives the stack's Terraform outputs as a dict and
+returns a `CheckResult`. Adding a new check to a stack is one function.
+
+---
+
 ## The naming module
 
 Before any stack does anything, it calls `module "naming"`. This module reads every
@@ -106,6 +145,30 @@ Microsoft Entra ID (formerly Azure Active Directory). Databricks does not mainta
 its own copy — it reads from Entra automatically via **Automatic Identity Management
 (AIM)**. This is why, after stack 20 runs, you see those groups appear in the
 Databricks account console with the "In Microsoft Entra ID" label.
+
+**Key concept — AIM sync delay:** AIM does not propagate group membership
+instantaneously. After stack 20 applies and Entra group memberships change, allow
+roughly one minute before running stacks that depend on those memberships (stack 30,
+stack 50). If a stack fails with a "user does not have permission" error immediately
+after stack 20, wait a minute and retry.
+
+**Key concept — the platform-admin persona and the `system` catalog:** stack 50
+grants `piq-platform-monitoring` the ability to read Databricks system tables (audit
+logs, query history, cost records). That grant requires MANAGE on the `system`
+catalog, which only metastore admins have. The stacks run locally as your personal
+`az login` session, so *you* need to be a metastore admin when stack 50 runs.
+
+Metastore admin is held by the group `piq-metastore-admins`. You get into that group
+by being in the `platform-admin` persona, which is nested into `piq-metastore-admins`.
+The persona is defined in `config/personas.yaml` — add your **UPN** (User Principal
+Name) to its `members` list before applying stack 20.
+
+**What a UPN is:** the login name of a user in Microsoft Entra ID. It looks like an
+email address (`you@yourdomain.com`) and is unique across your tenant. It is the
+value you used when you first signed in to Azure. You can confirm yours with:
+```bash
+az ad signed-in-user show --query userPrincipalName -o tsv
+```
 
 **Key concept — OIDC for domain SPs:** just like the Terraform SP, each domain
 deployer SP has no password. Its CI pipeline authenticates by presenting a

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install Python dependencies (pyyaml, ruamel.yaml, databricks-sdk)
+# Install Python dependencies and the util package (run once, and after pulling)
 pip install -r requirements.txt
 
 # Validate config/ files (mirrors Terraform preconditions, catches cycles/UPN/CIDR errors)
@@ -23,13 +23,25 @@ make plan-test
 # or: python3 tests/stacks/run_plan_tests.py
 # or for a single stack: python3 tests/stacks/run_plan_tests.py 40-unity-catalog
 
-# Plan/apply a single stack locally (requires az login and the Azure state backend)
-make plan STACK=40-unity-catalog
-make apply STACK=40-unity-catalog
+# Plan only — review the diff before committing to an apply
+python3 scripts/plan.py <stack>
+
+# Plan + confirm + apply + validate + write audit record
+python3 scripts/apply.py <stack>           # interactive (prompts for confirmation)
+python3 scripts/apply.py <stack> --yes     # non-interactive (CI)
+
+# Validate a deployed stack at any time (no apply required)
+python3 scripts/check.py <stack>
+
+# Low-level Terraform wrapper (still valid; used by the scripts above internally)
+./scripts/tf.sh <stack> init
+./scripts/tf.sh <stack> plan -out tfplan
+./scripts/tf.sh <stack> apply tfplan
 
 # Use OpenTofu instead of Terraform
 TF_BIN=tofu make test
 TF_BIN=tofu make plan-test
+TF_BIN=tofu python3 scripts/apply.py <stack>
 ```
 
 ## Architecture
