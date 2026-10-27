@@ -80,6 +80,11 @@ resource "databricks_catalog" "this" {
   }
 }
 
+# An ISOLATED catalog is only reachable from workspaces it is bound to. Everything inside a
+# catalog (grants, schemas, tags, volumes) therefore refers to the catalog THROUGH this binding,
+# so Terraform deletes them first and removes the binding last. Without that link a destroy
+# deletes the binding in parallel and every later delete fails with
+# "Catalog '...' is not accessible in current workspace".
 resource "databricks_workspace_binding" "catalog" {
   for_each       = var.catalogs
   securable_name = databricks_catalog.this[each.key].name
@@ -105,7 +110,7 @@ resource "databricks_workspace_binding" "readonly" {
 
 resource "databricks_grants" "catalog" {
   for_each = var.catalogs
-  catalog  = databricks_catalog.this[each.key].name
+  catalog  = databricks_workspace_binding.catalog[each.key].securable_name
 
   dynamic "grant" {
     for_each = var.catalog_grants[each.key]
@@ -118,10 +123,14 @@ resource "databricks_grants" "catalog" {
 
 resource "databricks_schema" "this" {
   for_each     = var.schemas
-  catalog_name = databricks_catalog.this[each.value.catalog_key].name
+  catalog_name = databricks_workspace_binding.catalog[each.value.catalog_key].securable_name
   name         = each.value.name
   comment      = each.value.comment
   properties   = merge(each.value.tags, { managed_by = "terraform" })
+  # Platform schemas hold objects that other stacks create with SQL (masking functions from stack 60,
+  # views from stack 70). Terraform does not track those, so deleting the schema must remove them too.
+  # Domain, vault and consumer schemas hold data and never set this.
+  force_destroy = try(each.value.force_destroy, false)
 }
 
 resource "databricks_grants" "schema" {
@@ -162,7 +171,7 @@ locals {
 resource "databricks_entity_tag_assignment" "catalog" {
   for_each    = local.catalog_tags
   entity_type = "catalogs"
-  entity_name = databricks_catalog.this[each.value.catalog_key].name
+  entity_name = databricks_workspace_binding.catalog[each.value.catalog_key].securable_name
   tag_key     = each.value.key
   tag_value   = each.value.value
 }

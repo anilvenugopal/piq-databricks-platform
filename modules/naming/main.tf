@@ -576,7 +576,9 @@ locals {
       comment     = "Platform ${t[1]}"
       volumes     = []
       tags        = { piq_layer = "PLATFORM" }
-      scope       = "env", sid = "${t[0]}/env"
+      # Holds functions and views created by SQL outside Terraform (stacks 60 and 70): safe to drop with the schema.
+      force_destroy = true
+      scope         = "env", sid = "${t[0]}/env"
       grants = t[1] == "governance" ? [
         { principal = "account users", privileges = ["USE_SCHEMA", "EXECUTE"] },
         ] : [
