@@ -124,7 +124,8 @@ check("validator accepts committed config", okv, msg)
 print("partition: every item belongs to exactly one scope")
 PARTITIONED = ["groups", "nesting", "access_nesting", "access_user_memberships", "access_test_user_memberships",
                "service_principals", "sp_memberships", "group_workspace_assignments", "sp_workspace_assignments",
-               "catalogs", "schemas", "volumes", "usage_scopes", "governed_tags", "abac_policies", "test_users"]
+               "catalogs", "schemas", "volumes", "usage_scopes", "governed_tags", "abac_policies", "test_users",
+               "terraform_identities"]
 
 
 def keys_of(out):

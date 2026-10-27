@@ -22,7 +22,8 @@ from util.scope import Target
 # Output maps whose keys name an owned item, and where to read the owner scope from.
 _KEYED = ["groups", "nesting", "access_nesting", "access_user_memberships", "access_test_user_memberships",
           "service_principals", "sp_memberships", "group_workspace_assignments", "sp_workspace_assignments",
-          "catalogs", "schemas", "volumes", "usage_scopes", "governed_tags", "abac_policies", "test_users"]
+          "catalogs", "schemas", "volumes", "usage_scopes", "governed_tags", "abac_policies", "test_users",
+          "terraform_identities"]
 
 
 @dataclass

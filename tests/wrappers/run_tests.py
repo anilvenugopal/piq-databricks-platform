@@ -100,6 +100,19 @@ check("no-op and read changes are ignored", check_plan({"resource_changes": [
     {"address": "b", "mode": "data", "index": "domain:prd:profitability/x", "change": {"actions": ["read"]}}]}, t, naming).ok)
 check("an unknown key is reported, not failed", check_plan(fake_plan([("random_thing", "mystery-key")]), t, naming).unattributed == ['module.x.random_thing.this["mystery-key"]'])
 
+# The shared scope creates the test users and the Terraform identities' metastore-admin memberships.
+shared_t = Target("20-identity", None, "shared")
+test_user = sorted(naming["test_users"])[0]
+identity = sorted(naming["terraform_identities"])[0]
+shared_plan = fake_plan([("azuread_user", test_user), ("random_password", test_user), ("azuread_group_member", identity)])
+res = check_plan(shared_plan, shared_t, naming)
+check("test users and Terraform identities belong to the shared scope: no notes, no violations",
+      res.ok and not res.unattributed and res.checked == 3, str((res.violations, res.unattributed)))
+check("the same resources are refused from an environment's domain scope",
+      not check_plan(shared_plan, Target("20-identity", "prd", "domain:claims"), naming).ok)
+check("every Terraform identity is named by prefix and environment",
+      sorted(naming["terraform_identities"]) == sorted([f"sp-{naming['prefix']}-terraform"] + [f"sp-{naming['prefix']}-terraform-{e}" for e in naming["env_keys"]]))
+
 # Every scope's own items pass its own check, and mixing two scopes fails.
 sample = [("dev", "env"), ("prd", "env"), ("prd", "domain:claims"), ("dev", "domain:profitability"), ("prd", "access"), (None, "shared")]
 keysets = {}

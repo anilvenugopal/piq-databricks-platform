@@ -178,10 +178,7 @@ resource "azuread_group_member" "sp" {
 # metastore admins through piq-metastore-admins (RUNBOOK Phase 4 sets that group as metastore
 # admin). Shared scope only.
 locals {
-  terraform_sps = var.scope == "shared" ? toset(concat(
-    ["sp-${module.naming.prefix}-terraform"],
-    [for e in module.naming.env_keys : "sp-${module.naming.prefix}-terraform-${e}"],
-  )) : toset([])
+  terraform_sps = toset(keys(module.naming.terraform_identities)) # empty outside the shared scope
 }
 
 data "azuread_service_principal" "terraform" {

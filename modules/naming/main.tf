@@ -324,7 +324,9 @@ locals {
   }
 
   # Training-only test users (users are shared; their memberships are access).
-  test_users = try(local.testusers.enabled, false) ? local.testusers.users : {}
+  test_users = try(local.testusers.enabled, false) ? {
+    for uk, u in local.testusers.users : uk => merge(u, { scope = "shared", sid = "shared" })
+  } : {}
   access_test_user_memberships = { for m in flatten([
     for uk, u in local.test_users : [for ref in u.member_of : [for t in local.ref_targets[ref] : {
       user = uk, group = t, env = try(local.groups[t].env, ""), scope = "access", sid = "${try(local.groups[t].env, "")}/access"
@@ -335,6 +337,13 @@ locals {
   # Service principals. Deployers and the vault loader are generated.
   # ---------------------------------------------------------------------------
   gh_org = local.platform.github.org
+
+  # The Terraform identities that bootstrap/ creates: one shared, one per environment. They are
+  # metastore admins through stack 20's shared scope, so that scope owns them.
+  terraform_identities = { for n in concat(
+    ["sp-${local.prefix}-terraform"],
+    [for e in local.env_keys : "sp-${local.prefix}-terraform-${e}"],
+  ) : n => { scope = "shared", sid = "shared" } }
 
   extra_sp_env = { for k, s in local.spcfg.service_principals : k => length(keys(s.workspaces)) == 1 ? keys(s.workspaces)[0] : "" }
 
@@ -854,6 +863,7 @@ output "access_nesting" { value = { for k, v in local.access_nesting : k => v if
 output "access_user_memberships" { value = { for k, v in local.access_user_memberships : k => v if local.want == null || v.sid == local.want } }
 output "access_test_user_memberships" { value = { for k, v in local.access_test_user_memberships : k => v if local.want == null || v.sid == local.want } }
 output "test_users" { value = local.want == null || local.want == "shared" ? local.test_users : {} }
+output "terraform_identities" { value = local.want == null || local.want == "shared" ? local.terraform_identities : {} }
 output "all_service_principal_names" {
   description = "Every service principal key -> display name, unfiltered. For referencing SPs owned by another scope."
   value       = { for k, s in local.service_principals : k => s.display_name }
