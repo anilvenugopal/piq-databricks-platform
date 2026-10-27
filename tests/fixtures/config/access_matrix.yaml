@@ -1,0 +1,73 @@
+# -----------------------------------------------------------------------------
+# access_matrix.yaml - Unity Catalog privileges per schema x principal.
+# modules/naming expands this into grants. Every grant goes to a GROUP; service
+# principals get privileges only through group membership.
+# -----------------------------------------------------------------------------
+
+# Local roles of a producer domain: piq-{env}-{domain}-{role}
+roles: [producer, analyst, ai, dbadmin]
+
+# A bundle value in the tables below may differ by tier, for example
+#   reporting: { analyst: { nonprod: RW, prod: R } }
+# A plain value (analyst: RW) applies to every environment.
+# Per-domain overrides (config/domain_access/<domain>.yaml) can never exceed override_ceiling.
+bundle_order: [R, RW, RWC, O]
+override_ceiling: RWC
+
+# Privilege bundles. O is the grantable equivalent of ownership; the real owner
+# of every catalog stays the Terraform service principal.
+bundles:
+  R:   [USE_SCHEMA, SELECT, EXECUTE, READ_VOLUME]
+  RW:  [USE_SCHEMA, SELECT, EXECUTE, READ_VOLUME, MODIFY, WRITE_VOLUME]
+  RWC: [USE_SCHEMA, SELECT, EXECUTE, READ_VOLUME, MODIFY, WRITE_VOLUME,
+        CREATE_TABLE, CREATE_MATERIALIZED_VIEW, CREATE_FUNCTION, CREATE_VOLUME, CREATE_MODEL]
+  O:   [ALL_PRIVILEGES, MANAGE]
+
+# Catalog-level privileges.
+catalog:
+  local_roles:  [USE_CATALOG, BROWSE]   # producer, analyst, ai of the domain
+  dbadmin:      [ALL_PRIVILEGES, MANAGE]
+  product_group: [USE_CATALOG]          # no BROWSE: consumers never see private schema names
+  governance:   [USE_CATALOG, BROWSE]   # piq-mesh-governance on every catalog
+
+# Private schemas of a domain catalog: schema -> role -> bundle. Missing = no grant.
+# dbadmin needs no row: O at catalog level covers every schema.
+domain:
+  admin:          {}
+  business_vault: { producer: RWC, analyst: R,   ai: R }
+  info_mart:      { producer: RWC, analyst: R,   ai: R }
+  reporting:      { producer: RWC, analyst: RW,  ai: R }
+  sandbox:        { producer: RWC, analyst: RWC, ai: RWC }
+  ai:             { producer: RWC, analyst: R,   ai: RWC }
+  event_log:      { producer: RWC, analyst: R,   ai: R }   # plus R for the domain's product groups
+
+# Every product_{name} schema. "product_group" = that product's own group.
+product: { producer: RWC, analyst: R, ai: R, product_group: R }
+
+# Shared raw vault. Principals: loader (writer group), engineer, domain_producer,
+# domain_ai (producer and ai groups of every domain in the same environment).
+vault:
+  catalog:
+    loader:   [USE_CATALOG]
+    engineer: [USE_CATALOG, BROWSE]
+    readers:  [USE_CATALOG]
+  schemas:
+    landing:             { loader: RWC, engineer: R }
+    stage:               { loader: RWC, engineer: R }      # every stage_{source}
+    raw_vault:           { loader: RWC, engineer: R, domain_producer: R, domain_ai: R }
+    business_vault_core: { loader: RWC, engineer: R, domain_producer: R, domain_ai: R }
+    admin:               { loader: RWC, engineer: R }
+  # Vault engineers build loaders in nonprod environments, so they write there.
+  # Keys are tiers (nonprod | prod), not environment names.
+  overrides:
+    nonprod: { engineer: RWC }
+
+# Consumer prep catalogs ({env}_{consumer}): every consumer group of that domain.
+consumer_prep: RWC
+
+# Anonymized catalogs ({prod env}_{domain}_anon): written by the domain's writer group in the
+# prod environment, read from every nonprod environment by the domain's local roles there.
+anon: { writer: RWC, nonprod_readers: R }
+
+# Roles whose groups in the PROD-tier environment may contain only service principals.
+service_principal_only_in_prod: [producer]

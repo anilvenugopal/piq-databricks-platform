@@ -14,20 +14,6 @@ domains:
     anon: true                       # create prd_claims_anon, readable from dev
     lakebase: false
     app_space: true
-  policy_financial:
-    description: Written and earned premium, policy financial transactions
-    owner: policy-financial-team@example.com
-    repo: piq-policy-financial
-    anon: false
-    lakebase: false
-    app_space: true
-  profitability:
-    description: Profitability measures derived from loss and premium products
-    owner: profitability-team@example.com
-    repo: piq-profitability
-    anon: false
-    lakebase: false
-    app_space: true
 
 # Private schemas created in every domain catalog. Product schemas
 # (product_{name}) come from config/products/<domain>.yaml.

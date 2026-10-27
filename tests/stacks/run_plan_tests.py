@@ -2,7 +2,11 @@
 """
 Mocked plans of every stack: catches wiring and type errors without cloud access.
 
-    python3 tests/stacks/run_plan_tests.py [stack ...]     # TF_BIN=tofu to use OpenTofu
+    python3 tests/stacks/run_plan_tests.py [--real] [stack ...]     # TF_BIN=tofu to use OpenTofu
+
+By default the stacks are planned against the fixed sample in tests/fixtures/config (three domains, one
+consumer, both environments), so the tests do not move when config/ changes. --real plans them against the
+real config/ instead.
 
 For each stack: copy it to a temp dir, write a .tftest.hcl that mocks every provider and
 overrides terraform_remote_state with values derived from the naming module, then run
@@ -20,6 +24,10 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+REAL = "--real" in sys.argv
+if REAL:
+    sys.argv.remove("--real")
+CONFIG = ROOT / "config" if REAL else ROOT / "tests" / "fixtures" / "config"
 
 from util.naming_eval import evaluate  # noqa: E402
 from util.scope import stack_scopes  # noqa: E402
@@ -42,7 +50,7 @@ def hcl(v, ind=0):
     return json.dumps(v)
 
 
-ok, n = evaluate(ROOT / "config")
+ok, n = evaluate(CONFIG)
 if not ok:
     sys.exit(n)
 envs = n["env_keys"]
@@ -128,6 +136,9 @@ for stack in (sys.argv[1:] or STACKS):
     text = "".join(p.read_text() for p in src.glob("*.tf"))
     tmp = pathlib.Path(tempfile.mkdtemp(prefix=f"plan-{stack}-"))
     shutil.copytree(ROOT, tmp / "repo", ignore=shutil.ignore_patterns(".git", ".venv", ".terraform*", "*.tfstate*", "__pycache__"))
+    if not REAL:  # the stacks read ../../config: give them the sample
+        shutil.rmtree(tmp / "repo" / "config")
+        shutil.copytree(CONFIG, tmp / "repo" / "config")
     sdir = tmp / "repo" / "stacks" / stack
     (sdir / "providers.tf").write_text((sdir / "providers.tf").read_text().replace('backend "azurerm" {}', ""))
     mocks = mocks_for(text)

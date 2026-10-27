@@ -1,0 +1,77 @@
+# -----------------------------------------------------------------------------
+# personas.yaml - job personas and platform groups.
+#
+# A persona is a job role with the same SHAPE in every environment but its own
+# access in each. Terraform creates one Entra group per persona per environment
+# (piq-dev-persona-data-engineer, piq-prd-persona-data-engineer) and nests each
+# into the groups listed for that environment only.
+#
+# Who holds a persona is NOT here: that is an entitlement, see
+# config/entitlements/<env>/personas.yaml. A person can be a data-engineer in dev
+# and only a data-analyst in prd.
+#
+# A domain can add personas of its own in config/domain_shape/<domain>.yaml.
+#
+# access.<env> references:
+#   "<env>:<domain|*>:<role>"   domain local role(s); * = every domain that has the role;
+#                               <env> must be the environment of this block
+#   "vault:<env>:engineer"      vault engineer group (same rule)
+#   "<platform-group-key>"      a platform group below; it must be assigned to this
+#                               environment's workspace (see workspaces:)
+# An empty list means the persona has no access in that environment.
+# Consumer-domain membership is NOT a persona: consumer leads manage it.
+# -----------------------------------------------------------------------------
+personas:
+  data-engineer:
+    description: Builds domain pipelines and products in dev; read-only in prd
+    access:
+      dev: ["dev:*:producer", "sandbox-users"]
+      prd: ["prd:*:analyst"]
+  data-analyst:
+    description: Analyses domain data
+    access:
+      dev: ["dev:*:analyst", "sandbox-users"]
+      prd: ["prd:*:analyst"]
+  ai-engineer:
+    description: Builds agents and models in dev; read-only in prd
+    access:
+      dev: ["dev:*:ai", "dev:*:producer", "sandbox-users"]
+      prd: ["prd:*:analyst"]
+  vault-engineer:
+    description: Builds vault loaders in dev; reads the prd vault
+    access:
+      dev: ["vault:dev:engineer", "sandbox-users"]
+      prd: ["vault:prd:engineer"]
+  team-lead:
+    description: Reviews work across domains
+    access:
+      dev: ["dev:*:analyst"]
+      prd: ["prd:*:analyst"]
+  platform-admin:
+    description: Operates the platform (break-glass account admin is separate)
+    access:
+      dev: ["dev-workspace-admins", "metastore-admins"]
+      prd: ["prd-workspace-admins", "metastore-admins"]
+  governance-admin:
+    description: Owns tag taxonomy, masking functions, ABAC policies and SARs
+    access:
+      dev: ["mesh-governance"]
+      prd: ["mesh-governance"]
+  monitoring-admin:
+    description: Reads cost, audit and usage telemetry
+    access:
+      dev: ["platform-monitoring"]
+      prd: ["platform-monitoring"]
+
+# Platform groups. workspaces: env -> USER | ADMIN
+# A group assigned to exactly one environment belongs to that environment; a group
+# assigned to several is shared across environments.
+platform_groups:
+  mesh-admins:          { description: "Platform admins and break-glass account admins", workspaces: { dev: ADMIN, prd: ADMIN } }
+  metastore-admins:     { description: "Unity Catalog metastore admins (includes the Terraform SP)", workspaces: { dev: USER, prd: USER } }
+  dev-workspace-admins: { description: "Workspace admins for dev", workspaces: { dev: ADMIN } }
+  prd-workspace-admins: { description: "Workspace admins for prd", workspaces: { prd: ADMIN } }
+  mesh-governance:      { description: "Tag taxonomy, masks, ABAC policies, SAR approvals; BROWSE on every catalog", workspaces: { dev: USER, prd: USER } }
+  platform-monitoring:  { description: "Cost, usage and audit telemetry readers", workspaces: { dev: USER, prd: USER } }
+  sandbox-users:        { description: "Personal sandbox schemas in dev_sandbox", workspaces: { dev: USER } }
+  prd-experimenters:    { description: "Members of approved prd_sandbox experiments", workspaces: { prd: USER } }

@@ -26,6 +26,8 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+# The tests run against a fixed sample of config/ so they do not move when the real config changes.
+CONFIG = ROOT / "tests" / "fixtures" / "config"
 
 from util.naming_eval import evaluate  # noqa: E402
 
@@ -44,8 +46,8 @@ def check(name, cond, detail=""):
 
 
 # ---------------------------------------------------------------------------
-print("positive: config/ as committed")
-ok, n = evaluate(ROOT / "config")
+print("positive: the sample config")
+ok, n = evaluate(CONFIG)
 if not ok:
     print(n)
     sys.exit(1)
@@ -114,7 +116,7 @@ check("mask condition uses governed tag", pol["condition"] == "has_tag_value('pi
 sp = n["service_principals"]["deploy:prd:claims"]
 check("deployer trusts its domain repo prd environment", sp["github_subjects"] == [f"repo:{n['platform']['github']['org']}/piq-claims:environment:prd"])
 check("generated tag values", n["governed_tags"]["piq_product"]["values"] == ["earned_premium", "loss", "loss_ratio"])
-okv, msg = validator(ROOT / "config")
+okv, msg = validator(CONFIG)
 check("validator accepts committed config", okv, msg)
 
 
@@ -139,7 +141,7 @@ seen: dict[str, str] = {}
 dupes: list[str] = []
 scopes = [(None, "shared")] + [(e, s) for e in n["env_keys"] for s in ["env", "access"] + [f"domain:{d}" for d in n["domain_keys"]]]
 for env, scope in scopes:
-    ok2, out = evaluate(ROOT / "config", env, scope)
+    ok2, out = evaluate(CONFIG, env, scope)
     if not ok2:
         check(f"scope {env}/{scope} evaluates", False, str(out)[-300:])
         continue
@@ -154,10 +156,10 @@ for env, scope in scopes:
               all(v["scope"] == scope and v["env"] == env for v in owned), str([v for v in owned if v["scope"] != scope][:2]))
 check("scopes are disjoint", not dupes, str(dupes[:3]))
 check("scopes together cover everything", set(seen) == full, str(sorted(full - set(seen))[:3]))
-okd, outd = evaluate(ROOT / "config", "prd", "domain:claims")
+okd, outd = evaluate(CONFIG, "prd", "domain:claims")
 check("domain scope contains only that domain's catalog",
       okd and set(outd["catalogs"]) == {"domain:prd:claims", "anon:prd:claims"}, str(outd)[:200] if not okd else str(list(outd["catalogs"])))
-oke, oute = evaluate(ROOT / "config", "prd", "env")
+oke, oute = evaluate(CONFIG, "prd", "env")
 check("env scope holds the vault, platform and sandbox catalogs",
       oke and {"vault:prd", "platform:prd", "sandbox:prd", "consumer:prd:exec_reporting"} <= set(oute["catalogs"])
       and not any(k.startswith("domain:") for k in oute["catalogs"]))
@@ -181,7 +183,7 @@ def write_yaml(path, data):
 
 
 tmp = pathlib.Path(tempfile.mkdtemp(prefix="cfg-"))
-shutil.copytree(ROOT / "config", tmp / "config")
+shutil.copytree(CONFIG, tmp / "config")
 c = tmp / "config"
 write_yaml(c / "domain_shape" / "claims.yaml", {
     "schemas": {"add": {"adjuster_notes": {"layer": "INFO_MART", "comment": "Adjuster notes"}}, "remove": ["ai"]},
@@ -229,7 +231,7 @@ shutil.rmtree(tmp, ignore_errors=True)
 def negative(title, mutate, expect):
     print(f"negative: {title}")
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="cfg-"))
-    shutil.copytree(ROOT / "config", tmp / "config")
+    shutil.copytree(CONFIG, tmp / "config")
     mutate(tmp / "config")
     ok, out = evaluate(tmp / "config")
     check("module rejects", (not ok) and expect["module"] in " ".join(str(out).split()), str(out)[-400:])
@@ -313,6 +315,16 @@ negative("human in an extra service-principal-only role in prd",
          lambda c: (shape(c, lambda d: d.setdefault("roles", {}).update({"loader": {"description": "x", "service_principal_only": True}})),
                     edit(c / "personas.yaml", lambda d: d["personas"]["team-lead"]["access"]["prd"].append("prd:claims:loader"))),
          {"module": "Humans may not join prod-tier", "validator": "humans may not join prd loader groups"})
+
+print("real config/")
+REAL = ROOT / "config"
+okr, nr = evaluate(REAL)
+check("the real config evaluates", okr, str(nr)[-300:])
+okv3, msg3 = validator(REAL)
+check("the real config passes the validator", okv3, msg3)
+if okr:
+    check("the real config has at least one domain and a prod and a nonprod environment",
+          len(nr["domain_keys"]) >= 1 and nr["prod_env"] and nr["nonprod_envs"])
 
 print()
 if failures:

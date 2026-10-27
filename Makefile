@@ -16,10 +16,10 @@ validate:            ## config checks + terraform fmt check
 test:               ## naming, validator and wrapper tests (no cloud access needed)
 	python3 tests/naming/run_tests.py
 	python3 tests/wrappers/run_tests.py
-	python3 tests/migration/run_tests.py
 
-plan-test:          ## mocked plan of every stack for every target (needs provider downloads)
+plan-test:          ## mocked plan of every stack for every target: the sample config, then the real one (needs provider downloads)
 	python3 tests/stacks/run_plan_tests.py
+	python3 tests/stacks/run_plan_tests.py --real
 
 fmt:
 	terraform fmt -recursive

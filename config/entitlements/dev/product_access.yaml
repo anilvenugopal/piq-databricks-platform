@@ -8,6 +8,4 @@
 # <product>: [domain or consumer domain, ...]   the producing domain approves via pull request.
 # A consumer domain (config/consumers/) can only be approved in the prod environment.
 products:
-  loss: [profitability]
-  earned_premium: [profitability]
-  loss_ratio: []
+  loss: []

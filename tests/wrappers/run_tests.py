@@ -16,6 +16,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+CONFIG = ROOT / "tests" / "fixtures" / "config"  # a fixed sample, so these tests do not move with the real config
 
 from util import deploys, release  # noqa: E402
 from util.naming_eval import evaluate  # noqa: E402
@@ -51,7 +52,7 @@ check("shared scope takes no environment", any("takes no environment" in p for p
 check("an unknown environment is refused", any("unknown environment" in p for p in check_target("10-foundation", "qa", "env", envs, domains)))
 check("a valid target has no problems", check_target("40-unity-catalog", "prd", "domain:claims", envs, domains) == [])
 
-ok, naming = evaluate(ROOT / "config")
+ok, naming = evaluate(CONFIG)
 if not ok:
     print(naming)
     sys.exit(1)
@@ -103,7 +104,7 @@ check("an unknown key is reported, not failed", check_plan(fake_plan([("random_t
 sample = [("dev", "env"), ("prd", "env"), ("prd", "domain:claims"), ("dev", "domain:profitability"), ("prd", "access"), (None, "shared")]
 keysets = {}
 for env, scope in sample:
-    okk, out = evaluate(ROOT / "config", env, scope)
+    okk, out = evaluate(CONFIG, env, scope)
     items = []
     for name, rtype in (("groups", "azuread_group"), ("catalogs", "databricks_catalog"), ("schemas", "databricks_schema"),
                         ("service_principals", "azuread_service_principal"), ("usage_scopes", "databricks_budget_policy"),

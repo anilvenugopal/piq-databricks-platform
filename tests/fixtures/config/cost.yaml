@@ -1,0 +1,14 @@
+# -----------------------------------------------------------------------------
+# cost.yaml - budgets (alert-only) and serverless usage policies.
+# Dedicated warehouses carry piq_domain tags, so SQL spend is attributable too.
+# -----------------------------------------------------------------------------
+budgets:
+  environment_monthly_usd: { dev: 150, prd: 400 }
+  domain_monthly_usd:      { dev: 50,  prd: 150 }   # each producer domain
+  vault_monthly_usd:       { dev: 50,  prd: 150 }
+  consumer_monthly_usd:    { prd: 100 }             # each consumer domain
+  ai_gateway_monthly_usd: 100
+  alert_at_percent: [75, 90, 100]
+
+usage_policies:
+  enabled: true      # one per env x {domain, vault, consumer, platform, sandbox}

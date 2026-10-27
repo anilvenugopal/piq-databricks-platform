@@ -1,0 +1,20 @@
+# -----------------------------------------------------------------------------
+# service_principals.yaml - EXTRA non-human identities.
+#
+# Generated automatically by modules/naming (do not list them here):
+#   sp-piq-{env}-{domain}-deploy   per producer domain; trusts repo:<org>/<domain repo>:environment:<env>
+#   sp-piq-{env}-vault-loader      trusts repo:<org>/<vault repo>:environment:<env>
+#   sp-piq-terraform               created by bootstrap/
+# member_of uses the persona reference syntax, plus "consumer:<consumer>:<role>".
+# -----------------------------------------------------------------------------
+service_principals:
+  powerbi:
+    description: Power BI scheduled refresh for executive reporting
+    member_of: ["consumer:exec_reporting:analyst"]
+    workspaces: { prd: USER }
+    github_subjects: []
+  monitoring:
+    description: Reads system tables for cost and audit exports
+    member_of: ["platform-monitoring"]
+    workspaces: { dev: USER, prd: USER }
+    github_subjects: []

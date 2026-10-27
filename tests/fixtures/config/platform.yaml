@@ -1,0 +1,78 @@
+# -----------------------------------------------------------------------------
+# platform.yaml - the file you edit first.
+# Everything else in the repo derives names, regions and environments from here.
+# -----------------------------------------------------------------------------
+prefix: piq                     # short org mnemonic, lowercase, 2-5 chars
+unique_suffix: av30             # 3-6 lowercase alphanumerics; makes storage/key vault names globally unique
+
+azure:
+  tenant_id: "4dcbd443-2dae-4065-b806-17d9c7781f58"        # az account show --query tenantId -o tsv
+  subscription_id: "b821d55b-210b-495c-a345-d2ab5775ad4b"  # az account show --query id -o tsv
+  location: eastus2             # pick the Azure region closest to you that supports Databricks serverless
+
+databricks:
+  # Filled in during RUNBOOK Phase 4, after the first workspace exists.
+  account_id: "2935891b-bdae-40f0-a22d-fc75055a1b3d"  
+  account_host: https://accounts.azuredatabricks.net
+
+# Terraform remote state, created by bootstrap/. Names must match bootstrap outputs.
+state:
+  resource_group: rg-piq-tfstate
+  storage_account: stpiqtfstateav30      # 3-24 lowercase alphanumerics, globally unique
+  container: tfstate
+
+github:
+  org: anilvenugopal
+  platform_repo: piq-databricks-platform
+
+identity:
+  # true = consumer leads (config/consumers/*.yaml) become Entra owners of their
+  # consumer groups. Turn on once those users exist in your tenant.
+  resolve_consumer_leads: false
+
+notifications:
+  ops_email: ops@example.com
+
+# Each environment declares its tier and where releases may come from:
+#   tier           nonprod | prod. Rules (who may write, where consumers and anonymized data live,
+#                  where personal sandboxes are allowed) depend on the tier, never on the name.
+#                  Exactly one environment must be prod.
+#   promotes_from  environments a release must have been deployed to successfully before it may
+#                  go here. Empty = accepts any release. Any number of environments may be listed.
+#   allow_hotfix   true = a release marked as a hotfix may skip promotes_from (named approver required).
+# To add qa, uat or dev2: add an entry here (plus its network block), then add its names to the
+# platform groups in personas.yaml. No code change is needed.
+environments:
+  dev:
+    tier: nonprod
+    promotes_from: []
+    allow_hotfix: false
+    network:
+      vnet_cidr: 10.10.0.0/20
+      host_subnet_cidr: 10.10.0.0/22        # "public" subnet in Azure Databricks terms
+      container_subnet_cidr: 10.10.4.0/22   # "private" subnet in Azure Databricks terms
+      nat_gateway: false                     # true = classic clusters get internet egress (~USD 32/month)
+    storage_replication: LRS
+    ip_access_list: []                       # CIDRs allowed to reach the workspace; empty = not enforced
+    serverless_egress:
+      restriction_mode: FULL_ACCESS          # FULL_ACCESS | RESTRICTED_ACCESS
+      enforcement_mode: DRY_RUN              # DRY_RUN logs violations, ENFORCED blocks them
+      allowed_domains: []
+  prd:
+    tier: prod
+    promotes_from: [dev]
+    allow_hotfix: true
+    network:
+      vnet_cidr: 10.20.0.0/20
+      host_subnet_cidr: 10.20.0.0/22
+      container_subnet_cidr: 10.20.4.0/22
+      nat_gateway: false
+    storage_replication: ZRS
+    ip_access_list: []
+    serverless_egress:
+      restriction_mode: RESTRICTED_ACCESS
+      enforcement_mode: DRY_RUN              # switch to ENFORCED after reviewing denied-egress logs
+      allowed_domains:
+        - api.github.com
+        - pypi.org
+        - files.pythonhosted.org

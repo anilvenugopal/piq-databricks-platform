@@ -5,8 +5,6 @@
 
 # Product publication and consumer approval: the producing domain decides.
 /config/products/claims.yaml             @your-github-org/claims-data-team
-/config/products/policy_financial.yaml   @your-github-org/policy-financial-team
-/config/products/profitability.yaml      @your-github-org/profitability-team
 
 # Consumer domains: their lead owns the definition.
 /config/consumers/exec_reporting.yaml    @your-github-org/exec-reporting-leads
@@ -27,8 +25,6 @@
 # per domain, next to its products file above.
 /config/domain_access/                   @your-github-org/platform-team @your-github-org/governance-team
 /config/domain_shape/claims.yaml         @your-github-org/claims-data-team
-/config/domain_shape/policy_financial.yaml @your-github-org/policy-financial-team
-/config/domain_shape/profitability.yaml  @your-github-org/profitability-team
 
 # Entitlements (who is in which group, which approvals are given). Stand-in for an IAM tool.
 # Nonprod is platform's call; the prod environment needs platform AND governance.

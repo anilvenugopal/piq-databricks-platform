@@ -1,0 +1,12 @@
+# -----------------------------------------------------------------------------
+# test_users.yaml - TRAINING ONLY. Entra users for signing in as each persona.
+# member_of takes persona:<env>:<name> (or persona:<env>:<domain>:<name>) and may also
+# name consumer groups, which in real use only the consumer lead would populate.
+# Passwords land in Terraform state (sensitive output).
+# -----------------------------------------------------------------------------
+enabled: true
+users:
+  test.engineer:  { display_name: "Test Engineer",    member_of: ["persona:dev:data-engineer", "persona:prd:data-analyst"] }
+  test.analyst:   { display_name: "Test Analyst",     member_of: ["persona:dev:data-analyst", "persona:prd:data-analyst"] }
+  test.ai:        { display_name: "Test AI Engineer", member_of: ["persona:dev:ai-engineer", "persona:prd:data-analyst"] }
+  test.executive: { display_name: "Test Executive",   member_of: ["consumer:exec_reporting:analyst"] }

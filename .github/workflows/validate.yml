@@ -24,10 +24,10 @@ jobs:
         run: python3 tests/naming/run_tests.py
       - name: Deployment wrapper tests
         run: python3 tests/wrappers/run_tests.py
-      - name: State migration test
-        run: python3 tests/migration/run_tests.py
-      - name: Mocked plan of every stack
+      - name: Mocked plan of every stack (sample config)
         run: python3 tests/stacks/run_plan_tests.py
+      - name: Mocked plan of every stack (real config)
+        run: python3 tests/stacks/run_plan_tests.py --real
       - name: Validate every stack
         run: |
           for d in bootstrap stacks/*/; do

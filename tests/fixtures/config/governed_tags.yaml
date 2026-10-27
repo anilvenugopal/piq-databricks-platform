@@ -1,0 +1,64 @@
+# -----------------------------------------------------------------------------
+# governed_tags.yaml - account-level tag taxonomy (tag policies).
+# values: a list, or "generated" (filled from config by modules/naming):
+#   piq_domain  <- domains, consumers, vault, platform, sandbox
+#   piq_product <- product names
+# assigners: platform group keys, or "role:<role>" = that local role in every
+# domain and environment, or "vault:writer".
+# -----------------------------------------------------------------------------
+tags:
+  piq_env:
+    description: Environment of the asset
+    values: generated                # every environment in platform.yaml
+    assigners: [mesh-governance]
+  piq_domain:
+    description: Owning domain
+    values: generated
+    assigners: [mesh-governance]
+  piq_layer:
+    description: Layer of a schema
+    values: [LANDING, STAGE, RAW_VAULT, BUSINESS_VAULT, ADMIN, INFO_MART, REPORTING,
+             SANDBOX, AI, EVENT_LOG, PRODUCT, PREP, ANON, PLATFORM, SCRATCH]
+    assigners: [mesh-governance]
+  piq_product:
+    description: Product a schema belongs to
+    values: generated
+    assigners: [mesh-governance]
+  piq_product_type:
+    description: Kind of product
+    values: [data, agent, app]
+    assigners: [mesh-governance]
+  piq_product_status:
+    description: Lifecycle state of a product
+    values: [draft, published, deprecated]
+    assigners: [mesh-governance]
+  piq_steward_domain:
+    description: Domain accountable for a vault entity
+    values: generated
+    assigners: [mesh-governance, "vault:writer"]
+  piq_source_system:
+    description: Source system of a vault table
+    values: generated
+    assigners: [mesh-governance, "vault:writer"]
+  pii:
+    description: Personal data type of a column; drives ABAC masks
+    values: [ssn, dob, email, phone, name]
+    assigners: [mesh-governance, "role:producer", "role:dbadmin", "vault:writer"]
+  sensitive_metric:
+    description: Sensitive business metric; drives ABAC masks
+    values: [financial]
+    assigners: [mesh-governance, "role:producer", "role:dbadmin"]
+  piq_ai_approved:
+    description: Whether a table may feed vector indexes and agents
+    values: ["true", "false"]
+    assigners: [mesh-governance, "role:dbadmin"]
+
+# ABAC column masks: mask key -> (tag, value) it matches and the function in
+# {env}_platform.governance that masks it. SARs unlock masks by key.
+masks:
+  ssn:              { tag: pii,              value: ssn,       function: mask_ssn }
+  dob:              { tag: pii,              value: dob,       function: mask_dob }
+  email:            { tag: pii,              value: email,     function: mask_email }
+  phone:            { tag: pii,              value: phone,     function: mask_phone }
+  name:             { tag: pii,              value: name,      function: mask_name }
+  financial_amount: { tag: sensitive_metric, value: financial, function: mask_amount }

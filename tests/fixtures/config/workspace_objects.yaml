@@ -1,0 +1,42 @@
+# -----------------------------------------------------------------------------
+# workspace_objects.yaml - compute and other WORKSPACE objects.
+# Names carry no environment: each workspace already is one environment.
+# -----------------------------------------------------------------------------
+warehouses:
+  domain:        # piq-{domain}-transform, one per producer domain per env
+    size: 2X-Small
+    max_clusters: 1
+    auto_stop_mins: 10
+    CAN_USE: [producer, analyst, ai]       # local roles of that domain only
+    CAN_MANAGE: [dbadmin]
+  vault:         # piq-vault-load
+    size: 2X-Small
+    max_clusters: 1
+    auto_stop_mins: 10
+  consumer:      # piq-{consumer}-bi defaults; overridden in consumers/*.yaml
+    size: 2X-Small
+    max_clusters: 1
+    auto_stop_mins: 10
+  shared:        # piq-shared: sandbox, governance and monitoring queries
+    size: 2X-Small
+    max_clusters: 1
+    auto_stop_mins: 5
+
+cluster_policies:
+  job-compute:
+    description: Classic job clusters for workloads serverless cannot run
+    CAN_USE: [producer, dbadmin]
+    max_workers: 4
+    autotermination_minutes: 0
+    nonprod_only: false
+  shared-compute:
+    description: Standard-access-mode interactive clusters (dev experimentation)
+    CAN_USE: [producer, analyst, ai, dbadmin]
+    max_workers: 2
+    autotermination_minutes: 30
+    nonprod_only: true
+
+vector_search:
+  enabled: true
+  CAN_USE: [producer, ai]
+  CAN_MANAGE: [dbadmin]

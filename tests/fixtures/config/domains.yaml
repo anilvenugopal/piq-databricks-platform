@@ -1,0 +1,60 @@
+# -----------------------------------------------------------------------------
+# domains.yaml - producer domains and the shared enterprise raw vault.
+#
+# One producer domain => one catalog per environment ({env}_{domain}) holding
+# private schemas and product schemas, a dedicated transform warehouse, a usage
+# policy, a deploy service principal, and Entra groups.
+# Domain keys are snake_case; group names use the hyphenated form.
+# -----------------------------------------------------------------------------
+domains:
+  claims:
+    description: Claims lifecycle - FNOL, reserves, payments, recoveries
+    owner: claims-data-team@example.com
+    repo: piq-claims                 # GitHub repo whose CI deploys this domain
+    anon: true                       # create prd_claims_anon, readable from dev
+    lakebase: false
+    app_space: true
+  policy_financial:
+    description: Written and earned premium, policy financial transactions
+    owner: policy-financial-team@example.com
+    repo: piq-policy-financial
+    anon: false
+    lakebase: false
+    app_space: true
+  profitability:
+    description: Profitability measures derived from loss and premium products
+    owner: profitability-team@example.com
+    repo: piq-profitability
+    anon: false
+    lakebase: false
+    app_space: true
+
+# Private schemas created in every domain catalog. Product schemas
+# (product_{name}) come from config/products/<domain>.yaml.
+schemas:
+  admin:          { layer: ADMIN,          comment: "Domain utilities, functions, logs and metadata; domain admins only" }
+  business_vault: { layer: BUSINESS_VAULT, comment: "PITs, bridges and computed satellites for this domain" }
+  info_mart:      { layer: INFO_MART,      comment: "Internal marts, not yet published" }
+  reporting:      { layer: REPORTING,      comment: "Domain team reporting datasets" }
+  sandbox:        { layer: SANDBOX,        comment: "Domain team experimentation" }
+  ai:             { layer: AI,             comment: "Agent tools, models, vector indexes, evaluation sets" }
+  event_log:      { layer: EVENT_LOG,      comment: "Change events for products; readable by product groups" }
+
+# Shared enterprise raw vault: {env}_vault, written only by the vault loader.
+vault:
+  description: Shared enterprise raw vault (Data Vault 2.0)
+  owner: vault-team@example.com
+  repo: piq-vault
+  # One stage_{source} schema per source system. Replace with your sources.
+  sources: [policy_admin, claims_admin, billing]
+  schemas:
+    landing:             { layer: LANDING,        comment: "Files and events as received", volumes: [files, documents] }
+    raw_vault:           { layer: RAW_VAULT,      comment: "Hubs, links, satellites per source; insert-only" }
+    business_vault_core: { layer: BUSINESS_VAULT, comment: "Shared rules: same-as links, reference satellites" }
+    admin:               { layer: ADMIN,          comment: "Loader metadata and load audit" }
+
+# Schema in each prd_{domain}_anon catalog (only domains with anon: true).
+anon_schemas: [data]
+
+# Names that cannot be used as domain or consumer keys.
+reserved: [vault, sandbox, platform, system, main, hive_metastore, samples, shared]
