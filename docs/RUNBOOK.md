@@ -485,24 +485,28 @@ users:
 In this order (see the table in Phase 3). Use `--release $REL` as above:
 
 ```bash
+python3 scripts/apply.py 20-identity --scope shared --release $REL      # FIRST, once; no --env
 for env in dev prd; do
   python3 scripts/apply.py 20-identity --scope env --env $env --release $REL
 done
 for env in dev prd; do
-  for d in claims policy_financial profitability; do
+  for d in claims; do
     python3 scripts/apply.py 20-identity --scope domain:$d --env $env --release $REL
   done
 done
-python3 scripts/apply.py 20-identity --scope shared --release $REL      # once; no --env
 for env in dev prd; do
   python3 scripts/apply.py 25-access --scope access --env $env --release $REL
 done
 ```
 
-> **Replay:** The loop names the environments: replace `dev prd` with the environments in `config/platform.yaml`, lowest tier first.
+`shared` goes first because the `env` scope links its persona groups into groups that `shared` creates
+(for example `piq-metastore-admins`), and finds them by name. Run `env` first and Terraform stops with
+`No group found matching specified filter (displayName eq 'piq-metastore-admins' ...)`.
+
+> **Replay:** The loops name the environments and the domain: replace `dev prd` with the environments in `config/platform.yaml`, lowest tier first, and `claims` with every key of `config/domains.yaml`.
 
 (Run `dev` first for each stack: prd refuses a release that has not passed in dev. The loops
-above do exactly that.) The domain list is the keys of `config/domains.yaml`. In GitHub the same
+above do exactly that.) In GitHub the same
 is `gh workflow run deploy.yml -f stack=20-identity -f environment=dev -f scope=env -f ref=$REL`,
 and for the shared scope leave `environment` empty.
 
@@ -558,7 +562,7 @@ and both workspaces assigned. The three identities have the **Account admin** ro
 python3 scripts/apply.py 30-account --scope shared --release $REL        # once; no --env
 for env in dev prd; do
   python3 scripts/apply.py 30-account --scope env --env $env --release $REL
-  for d in claims policy_financial profitability; do
+  for d in claims; do
     python3 scripts/apply.py 30-account --scope domain:$d --env $env --release $REL
   done
 done
@@ -665,7 +669,7 @@ catalogs), then each `domain:*`. dev first, then prd.
 python3 scripts/apply.py 40-unity-catalog --scope shared --release $REL      # once
 for env in dev prd; do
   python3 scripts/apply.py 40-unity-catalog --scope env --env $env --release $REL
-  for d in claims policy_financial profitability; do
+  for d in claims; do
     python3 scripts/apply.py 40-unity-catalog --scope domain:$d --env $env --release $REL
   done
 done
@@ -703,13 +707,13 @@ SHOW GRANTS ON CATALOG dev_claims;              -- product groups: USE CATALOG o
 ```bash
 for env in dev prd; do
   python3 scripts/apply.py 50-workspace --scope env --env $env --release $REL
-  for d in claims policy_financial profitability; do
+  for d in claims; do
     python3 scripts/apply.py 50-workspace --scope domain:$d --env $env --release $REL
   done
 done
 for env in dev prd; do
   python3 scripts/apply.py 55-ai-platform --scope env --env $env --release $REL
-  for d in claims policy_financial profitability; do
+  for d in claims; do
     python3 scripts/apply.py 55-ai-platform --scope domain:$d --env $env --release $REL
   done
 done
@@ -737,11 +741,10 @@ python3 scripts/check.py 50-workspace --scope domain:claims --env dev
 Checks that the warehouses of that scope exist, and (prod `env` run) that the monitoring
 group has USE_CATALOG on the system catalog.
 
-Also confirm in the workspace UI: SQL Warehouses shows `piq-claims-transform`,
-`piq-policy-financial-transform`, `piq-profitability-transform`, `piq-vault-load`
-and `piq-shared` in both workspaces, and `piq-exec-reporting-bi` in prd only.
-As `test.analyst`, only the three domain warehouses are usable. Personal access
-tokens are unavailable.
+Also confirm in the workspace UI: SQL Warehouses shows one `piq-<domain>-transform` per
+domain (here `piq-claims-transform`), `piq-vault-load` and `piq-shared` in both workspaces,
+and `piq-exec-reporting-bi` in prd only. As `test.analyst`, only the domain warehouses are
+usable. Personal access tokens are unavailable.
 
 ## Phase 8: Governance and observability (stacks 60 and 70)
 
@@ -751,7 +754,7 @@ Stacks 60 and 70 run SQL through `scripts/run_sql.py` on `piq-shared`. The
 ```bash
 for env in dev prd; do
   python3 scripts/apply.py 60-governance --scope env --env $env --release $REL   # masking functions first
-  for d in claims policy_financial profitability; do
+  for d in claims; do
     python3 scripts/apply.py 60-governance --scope domain:$d --env $env --release $REL
   done
 done
@@ -800,8 +803,8 @@ Run `sql/labs/lab06_masking_test.sql` (dev) and `sql/labs/lab11_products.sql` (p
 | Producer after joining the `claimant_pii` SAR | clear values (add the group to `config/entitlements/<env>/sars.yaml`, deploy `25-access` for that environment) |
 | Analyst reads `dev_vault.landing` | `PERMISSION_DENIED` |
 | Any user references `prd_claims` from dev | catalog not accessible |
-| `test.executive` lists `prd_profitability` | only `product_loss_ratio` |
-| `test.executive` lists `prd_claims` | no schemas (not approved for Loss) |
+| `test.executive` lists schemas in `prd_claims` | only `product_loss` (approved for it in `config/entitlements/prd/product_access.yaml`), no private schemas |
+| `test.executive` reads a table in `prd_claims.info_mart` | denied |
 | `prd_platform.audit.denied_requests` | shows the refused attempts |
 
 ## Phase 11: Day-2 readiness
