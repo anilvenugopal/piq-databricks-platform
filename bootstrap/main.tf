@@ -263,7 +263,7 @@ resource "azuread_application_federated_identity_credential" "env" {
 }
 
 # -----------------------------------------------------------------------------
-# Outputs: copy these into GitHub repository variables (RUNBOOK Phase 2).
+# Outputs: copy these into the variables of the matching GitHub environments (RUNBOOK Phase 2).
 # -----------------------------------------------------------------------------
 output "github_variables" {
   description = "Set these as GitHub variables on the matching GitHub environment (not secrets; none are sensitive)"

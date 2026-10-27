@@ -298,7 +298,9 @@ folder is fine for now.
 **Verify:** in Entra ID → App registrations, `sp-piq-terraform`, `sp-piq-terraform-dev`
 and `sp-piq-terraform-prd` exist; each has two federated credentials; Microsoft Graph
 API permissions show "Granted". `az group list --query "[?starts_with(name,'rg-piq')].name"`
-shows `rg-piq-tfstate`, `rg-piq-dev`, `rg-piq-prd`. All six GitHub environments exist and
+shows `rg-piq-tfstate`, `rg-piq-dev`, `rg-piq-prd`, and also `rg-piq-<env>-dbw-managed` for
+each workspace that already exists (Azure creates that group itself; bootstrap does not
+manage it). If you deploy through GitHub Actions, all six GitHub environments exist and
 carry their three variables.
 
 ## The deploy order and releases (read before Phase 3)
