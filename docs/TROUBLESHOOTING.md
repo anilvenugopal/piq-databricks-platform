@@ -12,7 +12,7 @@ How to read a target: stack + environment + scope, for example `40-unity-catalog
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Bootstrap: `Authorization_RequestDenied` on app role assignment | You are not Global Admin / Privileged Role Admin | Run bootstrap as a Global Administrator |
-| Bootstrap: a resource group "already exists ... needs to be imported" **(cloud, unverified)** | A resource group `rg-<prefix>-<env>` is still there from the old layout, where stack 10 created it | `terraform import` the group into bootstrap (`scripts/migrate_foundation_state.py` prints the commands), or destroy the old stack 10 first |
+| Bootstrap: a resource group "already exists ... needs to be imported" **(cloud, unverified)** | A resource group `rg-<prefix>-<env>` already exists in Azure but bootstrap's state does not know it | `terraform -chdir=bootstrap import 'azurerm_resource_group.env["<env>"]' /subscriptions/<subscription id>/resourceGroups/rg-<prefix>-<env>`, then plan again |
 | 10-foundation: lookup of resource group `rg-<prefix>-<env>` fails | Bootstrap has not been run for that environment, so the group does not exist | Run `bootstrap/` (it creates one resource group per environment in `platform.yaml`) |
 | 10-foundation: storage account name taken | `unique_suffix` collides globally | Change `unique_suffix` in `platform.yaml` |
 | 10-foundation: Key Vault name in use | Soft-deleted vault from a teardown | `az keyvault purge --name <name>` (dev) or wait out retention, or change `unique_suffix` |
@@ -79,9 +79,9 @@ How to read a target: stack + environment + scope, for example `40-unity-catalog
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| A person is not in the group after deploying `20-identity` | People are no longer added by stack 20. Memberships and approvals are stack 25 (`config/entitlements/<env>/`) | `python3 scripts/apply.py 25-access --env <env> --scope access` |
-| Validator: `persona X: use access.<env>; members moved to config/entitlements/<env>/personas.yaml` | Old format: `members` or `member_of` in `config/personas.yaml` | Put the access under `access.<env>`; move people to `config/entitlements/<env>/personas.yaml` |
-| Validator: `domain 'x': admins moved to config/entitlements/<env>/admins.yaml` / `product 'x': consumers moved to config/entitlements/<env>/product_access.yaml` / `SAR 'x': members moved to config/entitlements/<env>/sars.yaml` | Old locations | Move the data into `config/entitlements/<env>/` |
+| A person is not in the group after deploying `20-identity` | Stack 20 does not add people. Memberships and approvals belong to stack 25 (`config/entitlements/<env>/`) | `python3 scripts/apply.py 25-access --env <env> --scope access` |
+| Validator: `persona X: use access.<env>; members moved to config/entitlements/<env>/personas.yaml` | Unsupported fields: `members` or `member_of` in `config/personas.yaml` | Put the access under `access.<env>`; move people to `config/entitlements/<env>/personas.yaml` |
+| Validator: `domain 'x': admins moved to config/entitlements/<env>/admins.yaml` / `product 'x': consumers moved to config/entitlements/<env>/product_access.yaml` / `SAR 'x': members moved to config/entitlements/<env>/sars.yaml` | Those fields belong in `config/entitlements/<env>/`, not in the files named | Move the data into `config/entitlements/<env>/` |
 | 25-access: a group is "not found" | The group is owned by a scope that has not been deployed (a domain's groups come from `20 domain:<d>`; persona groups from `20 env`; shared groups from `20 shared`) | Deploy the missing `20-identity` target first: `shared`, then `env`, then the domain |
 | `Persona assignments that resolve to no group: <env>: <upn> -> persona:<env>:<name>` or validator `has unknown persona 'x'` | A name in `entitlements/<env>/personas.yaml` is not a persona; a domain persona is written `<domain>/<persona>` | Fix the name. Global personas are in `config/personas.yaml`; domain personas in `config/domain_shape/<domain>.yaml` |
 | `Entitlements in the wrong environment tier: <env>: sandboxes belong in a nonprod environment` (or `experiments belong in the prod environment`) | Sandboxes in the prod environment, or experiments in a nonprod one | Move the file to an environment of the right tier |

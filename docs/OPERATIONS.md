@@ -434,17 +434,6 @@ Replace `prd_platform` with `<prod env>_platform` if your prod environment has a
 `piq_domain`, and every other serverless DBU is tagged by a usage policy; `monitoring.cost_untagged_usage` should be near
 zero.
 
-## Teardown (training account)
+## Teardown
 
-Reverse of the deploy order, one target at a time:
-
-```
-per environment:  70 env;  60, 55, 50 domains then env;  40 domains, 40 env
-then:             40 shared
-per environment:  30 domains, 30 env;  25 access;  20 domains, 20 env;  10 env
-then:             30 shared, 20 shared, then bootstrap
-```
-
-Each step: `./scripts/tf.sh <stack> --env <env> --scope <scope> init`, then the same command with `destroy`. Catalogs must
-be empty before stack 40 can drop them. Key Vaults are soft-deleted. Domains go before `env` because their catalogs use the
-environment's storage credential. The one-off migration from the old single-state layout is in RUNBOOK.
+See [TEARDOWN.md](TEARDOWN.md): the order, the checks after each step, and the blockers seen so far.

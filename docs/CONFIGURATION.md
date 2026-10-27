@@ -167,7 +167,7 @@ anon: { writer: RWC, nonprod_readers: R }
 #   reporting: { analyst: { nonprod: RW, prod: R } }
 ```
 
-`workspace_objects.yaml` compute policies use `nonprod_only: true` (formerly `dev_only`).
+`workspace_objects.yaml` compute policies use `nonprod_only: true`.
 
 ## Entitlements
 

@@ -503,7 +503,7 @@ covered by checks that need no cloud access:
 |---|---|
 | `make test` (`tests/naming/run_tests.py`) | Names, groups, grants, nesting, masks; every negative rule is rejected by both the naming module and the validator; the **partition test**: every item belongs to exactly one scope and the scopes together cover everything |
 | `tests/wrappers/run_tests.py` | State keys, the scope check, the promotion gate (including a graph of environments), release tags, `apply.py` refusals |
-| `make plan-test` | A mocked plan of every stack for every target. The resources planned across all of a stack's targets add up to the same count as the old combined plan (for example 347 for stack 40), so splitting lost and duplicated nothing |
+| `make plan-test` | A mocked plan of every stack for every target. The resources planned across all of a stack's targets add up to the same count as one plan of the whole stack (for example 347 for stack 40), so splitting lost and duplicated nothing |
 | `terraform validate` | Every stack and `bootstrap/` |
 
 Not yet proven: real provider behaviour (for example that the per-environment resource group

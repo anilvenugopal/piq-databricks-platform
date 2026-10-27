@@ -87,7 +87,7 @@ The environment appears **only** in names whose scope spans environments: catalo
 
 Every group, catalog, schema, grant, policy, warehouse and service principal belongs to exactly one scope, stamped on it as `sid` (`shared`, `<env>/env`, `<env>/domain:<name>`, `<env>/access`). The naming module is always computed in full; its `environment` and `scope` variables only filter the outputs to what one run owns. A run has its own state: `<stack>/shared.tfstate`, `<stack>/<env>/env.tfstate`, `<stack>/<env>/access.tfstate`, `<stack>/<env>/domain-<name>.tfstate` (`util/scope.py`). Scopes refer to each other by computed names, not by reading each other's state. A nesting edge is owned by its parent group's scope (an edge into a shared group is owned by the child's scope, so `shared` never depends on an environment); a group from another scope is found by display name.
 
-`tests/naming` proves every item has exactly one scope (partition test); mocked plans show the scoped plans add up to the old combined plan. `util/scope_check.py` refuses a saved plan that changes anything the target does not own.
+`tests/naming` proves every item has exactly one scope (partition test); mocked plans show the scoped plans add up to a plan of the whole stack. `util/scope_check.py` refuses a saved plan that changes anything the target does not own.
 
 ### Stack layering
 
@@ -128,6 +128,8 @@ Column masking is catalog-scoped. For each (catalog × mask) pair, `modules/nami
 `tests/naming/run_tests.py` evaluates the naming module (through `util/naming_eval.py`) against `config/` and asserts group names, nesting, grants, warehouses and ABAC exceptions; a partition test over every scope; a copy of config with domain additions; and negative cases that mutate config/, expecting both the Terraform precondition and the Python validator to reject the change.
 
 `tests/wrappers/run_tests.py` covers scopes and state keys, the scope check, the promotion gate (including environment graphs and hotfix), releases and apply.py's safety rules.
+
+The tests run against a fixed sample of `config/` in `tests/fixtures/config`, so they do not move when the real config changes; the real `config/` is validated and evaluated separately, and `run_plan_tests.py --real` plans the stacks against it.
 
 `tests/stacks/run_plan_tests.py` copies each stack to a temp dir, generates a `.tftest.hcl` that mocks all providers and overrides `terraform_remote_state`, then runs one `plan` per target of the stack. This validates resource wiring and type correctness without cloud access.
 

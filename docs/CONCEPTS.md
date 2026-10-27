@@ -136,7 +136,7 @@ Two tests (no cloud needed):
   together cover everything.
 - **Mocked plans** (`tests/stacks/run_plan_tests.py`): plans each stack for every
   target. The number of resources planned across all of a stack's targets equals
-  what the old single-state stack planned (for example 347 for `40-unity-catalog`).
+  what a plan of the whole stack at once would show (for example 347 for `40-unity-catalog`).
   Nothing was lost and nothing is counted twice.
 
 ---

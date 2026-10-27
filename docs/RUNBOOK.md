@@ -18,9 +18,8 @@ per use and serverless scales to zero.
 
 ## How this design works (read once, 5 minutes)
 
-Old versions of this repo applied everything for both environments in one go. Now every
-deployment is **one stack, for one environment, for one scope**. That is what lets you
-deploy `claims` to `dev` without touching `policy_financial` or `prd`.
+Every deployment is **one stack, for one environment, for one scope**. That is what lets you
+deploy one domain to one environment without touching any other domain or environment.
 
 | Term | Plain meaning |
 |---|---|
@@ -84,105 +83,28 @@ gh workflow run deploy.yml -f stack=40-unity-catalog -f environment=dev \
   -f scope=domain:claims -f ref=rel-2026.10.23.1
 ```
 
+> **Replay:** Shown for `dev` only. Repeat the same commands for every other environment in `config/platform.yaml`, lowest tier first. `claims` stands for any domain: repeat for every domain in `config/domains.yaml`.
+
 The **order** in which stacks must run is in [Phase 3 onwards](#phase-3-foundation-stack-10).
 The short version: go **stack by stack**; within a stack run **dev first, then prd**;
 within an environment run `env` before `domain:*`.
 
 ---
 
-## Phase 0: Move from an older build (MANUAL, only if you built from the old code)
+## Phase 1: Accounts and tooling (MANUAL, one-time, about 1 hour)
 
-Skip this phase on a brand-new subscription. Do it if you already applied the old
-version of this repo (one state per stack, one `sp-piq-terraform`, one `platform`
-GitHub environment).
+Skip every step you have already done. This table says how to tell:
 
-**What stays, what goes, what moves:**
-
-| | What | Why |
+| Step | Already done if | Check |
 |---|---|---|
-| **Stays** | `bootstrap/` and its local state, the state storage account (`rg-piq-tfstate`), the Databricks account, and everything stack 10 built: resource groups, networks, workspaces, storage accounts, Key Vaults | Nothing about these changed. Keeping them avoids recreating workspaces and a locked Key Vault name. |
-| **Goes** | Everything stacks 20 to 70 created: Entra groups and service principals, Databricks workspace objects, Unity Catalog objects, budgets | They hold no data yet and rebuild in minutes. Persona groups are renamed anyway (`piq-persona-x` becomes `piq-dev-persona-x`). |
-| **Moves** | Stack 10's single state, which holds both environments, is split into one state per environment | The real Azure resources do not change; only the record of them moves (`scripts/migrate_foundation_state.py`). |
+| 1 Azure subscription | you can sign in | `az account show --query id -o tsv` |
+| 3 Resource providers | every provider says `Registered` | the check under step 3 |
+| 4 Tools | each prints a version | `az --version \| head -1; terraform version; databricks --version; gh --version; python3 --version` |
+| 5a, 5b Repository | your code is in your GitHub repo | `git remote -v`, then `git ls-remote origin` |
+| 5c GitHub Environments | **Only needed to deploy through GitHub Actions** (`deploy.yml`). Skip it to deploy from your own machine with `scripts/apply.py`, and add it later | none |
+| 6 `config/platform.yaml` | real tenant, subscription and storage names are filled in | `python3 scripts/validate_config.py` prints `Config OK` |
 
-Prefer a clean slate? Destroy stack 10 too (add `10-foundation` to the loop in step 1),
-skip steps 3 and 4, and read the Key Vault warning at the end of this phase.
-
-**Step 1 runs from the OLD code**, because the old state files only make sense to the old
-stacks. Check out the commit before this refactor (`efacd2f`):
-
-```bash
-git switch main          # or: git checkout efacd2f   (must not contain scripts/state_key.py)
-az login
-```
-
-Checklist:
-
-1. Destroy stacks 70 down to 20, with the old `tf.sh` syntax (no `--scope`). Leave 10 alone:
-   ```bash
-   for s in 70-observability 60-governance 55-ai-platform 50-workspace 40-unity-catalog 30-account 20-identity; do
-     ./scripts/tf.sh $s init
-     ./scripts/tf.sh $s destroy
-   done
-   ```
-   If a destroy stops because something was created by hand (for example a table in a
-   catalog), delete that object and run the destroy again. There should be no real
-   data yet. The group `piq-metastore-admins` is deleted here; Phase 4c points the
-   metastore admin at its replacement.
-2. Switch to the new code: `git switch refactor/scoped-deploys` (or the branch or commit
-   that contains this runbook), then `pip install -r requirements.txt`.
-3. Split stack 10's state. First a dry run, which changes nothing and prints what moves
-   where and the import commands for step 4:
-   ```bash
-   python3 scripts/migrate_foundation_state.py
-   python3 scripts/migrate_foundation_state.py --execute
-   ```
-   It moves each resource with `terraform state mv` into `10-foundation/<env>/env.tfstate`,
-   refuses to overwrite a state that already has content, stops if any resource belongs to
-   no environment, and leaves the old `10-foundation.tfstate` untouched.
-4. The resource groups are now created by `bootstrap/`, but they already exist. Import
-   them before the first bootstrap apply, using the commands the script printed:
-   ```bash
-   terraform -chdir=bootstrap init
-   terraform -chdir=bootstrap import 'azurerm_resource_group.env["dev"]' /subscriptions/<subscription>/resourceGroups/rg-piq-dev
-   terraform -chdir=bootstrap import 'azurerm_resource_group.env["prd"]' /subscriptions/<subscription>/resourceGroups/rg-piq-prd
-   ```
-   Then continue with Phase 2. Bootstrap must not plan to create or change these groups.
-5. After Phase 3 shows stack 10 planning with **no changes** in each environment, delete
-   the old flat state blobs:
-   ```bash
-   ACCOUNT=$(python3 scripts/config_value.py state.storage_account)
-   for s in 10-foundation 20-identity 30-account 40-unity-catalog 50-workspace 55-ai-platform 60-governance 70-observability; do
-     az storage blob delete --account-name "$ACCOUNT" --container-name tfstate \
-       --auth-mode login --name "$s.tfstate"
-   done
-   ```
-   The old keys are flat (`<stack>.tfstate`); the new keys have folders, so they never collided.
-6. Remember what comes back with **new identifiers**: every Entra group and every service
-   principal of stacks 20 and up. The workspaces keep theirs. You refresh the GitHub
-   variables in Phase 2.
-7. The Unity Catalog **metastore belongs to the Databricks account**, so it survives and
-   stays attached to the existing workspaces. Its admin was the group deleted in step 1;
-   Phase 4c sets the new `piq-metastore-admins` as admin. This has not been tested
-   against a real account.
-
-**Verify:**
-```bash
-az group list --query "[?starts_with(name,'rg-piq')].name" -o tsv        # rg-piq-tfstate, rg-piq-dev, rg-piq-prd
-az ad group list --display-name piq- --query "length(@)"                 # 0 (nothing from stacks 20 and up is left)
-az storage blob list --account-name "$ACCOUNT" --container-name tfstate --auth-mode login \
-  --prefix 10-foundation/ --query "[].name" -o tsv                       # dev/env.tfstate and prd/env.tfstate
-```
-In the Databricks account console, the **Workspaces** page still lists both workspaces.
-
-**If you chose the clean slate:** Key Vault names stay reserved after destroy.
-The provider is set not to purge on destroy. dev: `az keyvault purge --name kv-piq-dev-<suffix>`.
-prd: **cannot be purged** (purge protection, 90 days); change `unique_suffix` in
-`config/platform.yaml` instead (that also gives new storage account names; do **not**
-change `state.storage_account`). See what is waiting with `az keyvault list-deleted -o table`.
-The old resource groups `rg-piq-dev` and `rg-piq-prd` must be gone before bootstrap, which creates
-them again.
-
-## Phase 1: Accounts and tooling (MANUAL, about 1 hour)
+If everything above is done, go to Phase 2.
 
 1. Create an Azure pay-as-you-go subscription. Its Entra tenant comes with it and
    you are its Global Administrator.
@@ -236,7 +158,7 @@ them again.
    ```
    Replace `<your-org>` with your GitHub username or organisation name.
 
-   **c. Create the GitHub Environments.** On GitHub, open the repo → **Settings** →
+   **c. Create the GitHub Environments (only to deploy through GitHub Actions; skip this to deploy from your own machine).** On GitHub, open the repo → **Settings** →
    **Environments** → **New environment**. Names are case-sensitive: the workflows
    and the Azure trust rules use them. Create six (with the default `dev` and `prd`):
 
@@ -256,9 +178,11 @@ them again.
    > reviewer, then applies the saved plan. GitHub only pauses where an environment has
    > required reviewers, so `prd` is where a person signs off. The `-plan` environments
    > have no branch restriction because pull-request plans run from a PR branch.
-   > Always start deploys from `main` (**Use workflow from: main**). The code that is
+   > Start a deploy from the branch that contains `.github/workflows/deploy.yml`
+   > (**Use workflow from: that branch**; `main` once your work is merged). The code that is
    > deployed is the `ref` you type (a release tag or a commit), not the branch the
-   > workflow file comes from.
+   > workflow file comes from. Before the work is merged, change **Deployment branches** on
+   > the environments above from `main` only to include your branch, or the jobs will be refused.
 
 6. Fill in `config/platform.yaml` with your real values. Open the file and replace
    the placeholder values for these fields:
@@ -272,7 +196,7 @@ them again.
    | `state.storage_account` | Must be 3–24 lowercase alphanumerics, globally unique across all Azure. Convention: `st` + your prefix + `tfstate` + your suffix, e.g. `stpiqtfstatea1b2`. You are choosing a name here — the bootstrap step will create this storage account. |
    | `github.org` | Your GitHub username or organisation name, exactly as it appears in your GitHub URLs (e.g. `avenugopal` or `premiumiq`). |
    | `notifications.ops_email` | An email address for budget and alert notifications. Use your own for now. |
-   | `databricks.account_id` | Leave as `00000000-0000-0000-0000-000000000000` on a brand-new account; you fill this in during Phase 4. If you kept your Databricks account (Phase 0), it is already filled in. |
+   | `databricks.account_id` | Leave as `00000000-0000-0000-0000-000000000000` on a brand-new account; you fill this in during Phase 4. If you already have a Databricks account, it is already filled in. |
 
    > **Tip:** the prefix `piq` and the suffix `a1b2` are already in the file as examples.
    > You can keep them or change them — just keep `prefix` to 2–5 lowercase letters.
@@ -284,14 +208,18 @@ them again.
 
 **Verify:** `python3 scripts/validate_config.py` prints `Config OK`.
 
-## Phase 2: Bootstrap (local Terraform, once; re-run after upgrading)
+## Phase 2: Bootstrap (local Terraform)
+
+**Run it** if bootstrap has never been applied, or if `terraform plan` in `bootstrap/` shows changes. It
+is safe to run again: Terraform only changes what differs. Bootstrap runs once per setup, and again
+whenever `bootstrap/` itself changes or you add an environment to `config/platform.yaml` (each
+environment gets its own resource group and identity).
 
 > **What this phase does:** creates, in Azure and Entra:
 > 1. A **storage account + container** to hold all future Terraform state files remotely
 >    (so CI and your local machine share the same state).
 > 2. One **resource group per environment** (`rg-piq-dev`, `rg-piq-prd`). They are made
 >    here, not by stack 10, so each environment's identity can be limited to its own.
->    (If you kept the Azure foundation in Phase 0, they already exist: import them first.)
 > 3. A **shared service principal** (`sp-piq-terraform`) for scope `shared`, and one
 >    service principal **per environment** (`sp-piq-terraform-dev`, `sp-piq-terraform-prd`).
 >    A service principal is a robot account. None has a password: each authenticates
@@ -313,8 +241,8 @@ terraform output env_terraform_sps
 terraform output next_steps
 ```
 
-If you are re-running bootstrap on top of an older build, the plan replaces the old
-federated credentials (`pull_request`, `environment:platform`) with the new ones and adds
+If bootstrap was applied before, the plan also replaces its single-identity federated
+credentials (`pull_request`, `environment:platform`) with the per-environment ones and adds
 the per-environment pieces. That is expected.
 
 > **What `terraform init` does:** downloads the provider plugins (azurerm, azuread)
@@ -341,7 +269,7 @@ relationship between GitHub Actions and Azure:
   only. No password is ever stored anywhere. A job in the `dev` environment cannot sign
   in as the prd identity.
 
-`github_variables` prints the three IDs each GitHub Environment needs. Set them as
+`github_variables` prints the three IDs each GitHub Environment needs (**only needed to deploy through GitHub Actions**). Set them as
 **environment variables** (repo → Settings → Environments → pick the environment →
 **Environment variables**; use Variables, not Secrets: these are IDs, not passwords):
 `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`.
@@ -373,16 +301,16 @@ API permissions show "Granted". `az group list --query "[?starts_with(name,'rg-p
 shows `rg-piq-tfstate`, `rg-piq-dev`, `rg-piq-prd`. All six GitHub environments exist and
 carry their three variables.
 
-## Phase 3: Foundation (stack 10)
+## The deploy order and releases (read before Phase 3)
 
 From here you deploy targets in a fixed order. The whole order, so you can see where
-each phase fits (**go stack by stack; dev first, then prd; `env` before `domain:*`**):
+each phase fits (**go stack by stack; lowest tier first; inside a stack `shared`, then `env`, then `domain:*`**):
 
-| # | Stack | Targets (run dev, then prd) | Why this position |
+| # | Stack | Targets (repeat for each environment, lowest tier first) | Why this position |
 |---|---|---|---|
 | 1 | 10-foundation | `env` | workspaces and storage must exist first |
 | 2 | 20-identity | `shared` (once) | creates the groups that span environments (for example `piq-metastore-admins`); every environment's persona links into them are made by that environment's own run |
-| 3 | 20-identity | `env`, then each `domain:*` (claims, policy_financial, profitability) | domain groups are nested under by the persona groups the `env` run creates |
+| 3 | 20-identity | `env`, then each `domain:*` | domain groups are nested under by the persona groups the `env` run creates |
 | 4 | 25-access | `access` | the groups it fills must exist |
 | — | **Phase 4 (MANUAL, once)** | claim account, metastore admin, account admins | |
 | 5 | 30-account | `shared` (once), then `env`, then each `domain:*` | puts every group and service principal into the Databricks account |
@@ -390,7 +318,49 @@ each phase fits (**go stack by stack; dev first, then prd; `env` before `domain:
 | 7 | 50-workspace | `env`, each `domain:*` | warehouses and compute policies |
 | 8 | 55-ai-platform | `env`, each `domain:*` | optional (see Phase 7) |
 | 9 | 60-governance | `env`, then each `domain:*` | `env` creates the masking functions the domain policies call |
-| 10 | 70-observability | `env` (prd only) | views over system tables |
+| 10 | 70-observability | `env` (the prod environment only) | views over system tables |
+
+### The build order as a diagram
+
+```mermaid
+flowchart TD
+    setup(["Bootstrap<br/>(GitHub environments and variables only to deploy through GitHub Actions)"]) --> b10
+    b10["10-foundation<br/>each environment: env"] --> b20s
+    b20s["20-identity<br/>shared (once)"] --> b20
+    b20["20-identity<br/>each environment: env, then each domain"] --> b25
+    b25["25-access<br/>each environment: access"] --> manual
+    manual["MANUAL, once<br/>claim the Databricks account, set the metastore admin,<br/>make every Terraform identity an account admin"] --> b30s
+    b30s["30-account<br/>shared (once)"] --> b30
+    b30["30-account<br/>each environment: env, then each domain"] --> b40s
+    b40s["40-unity-catalog<br/>shared (once)<br/>only after 30 has finished for EVERY environment"] --> b40
+    b40["40-unity-catalog<br/>each environment: env, then each domain"] --> b50
+    b50["50-workspace<br/>each environment: env, then each domain"] --> b55
+    b55["55-ai-platform<br/>each environment: env, then each domain"] --> b60
+    b60["60-governance<br/>each environment: env, then each domain"] --> b70
+    b70["70-observability<br/>the prod environment only: env"]
+
+    classDef once fill:#fff3cd,stroke:#8a6d3b,color:#000
+    classDef manual fill:#f8d7da,stroke:#842029,color:#000
+    class b20s,b30s,b40s once
+    class manual manual
+```
+
+Read it top to bottom. Yellow boxes are **shared** scopes: they run once, not once per environment. "Each environment"
+means the whole box is repeated for every environment in `config/platform.yaml`, lowest tier first, and "each domain" for every
+domain in `config/domains.yaml`. Nothing in the diagram names an environment or a domain, so it stays true when config changes.
+
+**Not every stack has every scope.** Each stack lists the scopes it supports in `stacks/<stack>/stack.yaml`, and the
+boxes follow that file:
+
+| Scopes a stack has | Stacks |
+|---|---|
+| `shared`, `env` and `domain` | 20-identity, 30-account, 40-unity-catalog |
+| `env` and `domain` | 50-workspace, 55-ai-platform, 60-governance |
+| `access` only | 25-access |
+| `env` only | 10-foundation, 70-observability (70 only in the prod environment) |
+
+Inside a stack the build order is always `shared`, then `env`, then `domain`, for whichever of those the stack has.
+Teardown reverses it: see [TEARDOWN.md](TEARDOWN.md).
 
 Two ordering rules come from reading the code, not from a real build, so treat them as
 the likely behaviour and tell us if the cloud disagrees:
@@ -401,21 +371,42 @@ the likely behaviour and tell us if the cloud disagrees:
 - `20-identity shared` runs **first** and only once. Re-run it when you add an environment
   only to add that environment's Terraform identity to `piq-metastore-admins`.
 
-**The release.** A prd target only accepts a release tag that already passed in dev
-for the same stack and scope. So cut one release once the code and config are final,
-and deploy **every** target from it, dev first:
+### Cutting a release
+
+A prd target only accepts a **release**: a git tag that already passed in dev for the same stack and scope.
+`scripts/release.py` creates the tag and names it for you: `rel-`, today's date, and a counter for that day
+(`rel-2026.10.26.1`, then `.2`). You do not choose the name.
+
+A release tags the commit you are on, so:
+
+1. **Commit everything.** `release.py` refuses to run on a working tree with uncommitted changes, because the tag
+   must name exactly the code you will deploy.
+2. **Be on the branch that holds the code you want to release.** That is `main` once your work is merged; before
+   that, your feature branch. Nothing requires `main`.
+3. Cut the tag, then check it out, so the code that runs is the code that was released:
 
 ```bash
-git switch main && git pull            # the commit you want to build from
-python3 scripts/release.py --push      # prints e.g. "Created rel-2026.10.23.1"
-git checkout rel-2026.10.23.1          # run everything below from this tag
-REL=rel-2026.10.23.1
+git status                           # must show a clean working tree
+python3 scripts/release.py           # prints the tag it created, e.g. "Created rel-2026.10.26.1"
+REL=rel-2026.10.26.1                 # use the name it printed
+git checkout $REL                    # run everything below from this tag
 ```
+
+When you are finished deploying, `git switch <your branch>` takes you back.
+
+Add `--push` to `release.py` only if you will deploy through GitHub Actions, because `deploy.yml` checks the
+tag out from GitHub. Deploying from your own machine does not need the tag pushed. A prd target needs the same
+`$REL` that passed in dev, so cut the release once and deploy every target from it, dev first.
 
 > If you edit `config/` during the build (on a brand-new account you must add the
 > Databricks account ID in Phase 4), commit it, cut a **new** release, and run the
 > dev targets again from it (they plan empty and just record the new release as
 > deployed). Check with `python3 scripts/status.py --env dev`.
+
+## Phase 3: Foundation (stack 10)
+
+The Azure foundation: workspaces and storage for each environment. Everything after it depends on it.
+Run this from the release you checked out above (`$REL`).
 
 ### Stack 10, environment by environment
 
@@ -423,6 +414,8 @@ REL=rel-2026.10.23.1
 python3 scripts/apply.py 10-foundation --scope env --env dev --release $REL
 python3 scripts/apply.py 10-foundation --scope env --env prd --release $REL
 ```
+
+> **Replay:** This block names `dev` and `prd`, the two environments in `config/platform.yaml` today. Use your own environment names, and repeat the commands once for each environment, lowest tier first.
 
 Or in GitHub: `gh workflow run deploy.yml -f stack=10-foundation -f environment=dev -f scope=env -f ref=$REL`
 (then approve in the Actions run for any environment with required reviewers).
@@ -441,6 +434,9 @@ Databricks account if you do not have one yet.
 python3 scripts/check.py 10-foundation --scope env --env dev
 python3 scripts/check.py 10-foundation --scope env --env prd
 ```
+
+> **Replay:** This block names `dev` and `prd`, the two environments in `config/platform.yaml` today. Use your own environment names, and repeat the commands once for each environment, lowest tier first.
+
 Each workspace URL must be reachable and each storage account provisioned. Also confirm
 both workspace URLs open in a browser and you can sign in.
 
@@ -458,6 +454,8 @@ both files:
 az ad signed-in-user show --query userPrincipalName -o tsv
 grep -n "$(az ad signed-in-user show --query userPrincipalName -o tsv)" config/entitlements/dev/personas.yaml config/entitlements/prd/personas.yaml
 ```
+
+> **Replay:** This block names `dev` and `prd`, the two environments in `config/platform.yaml` today. Use your own environment names, and repeat the commands once for each environment, lowest tier first.
 
 If it is not, add a line to each file (and open a pull request in a team setting):
 
@@ -499,6 +497,8 @@ for env in dev prd; do
 done
 ```
 
+> **Replay:** The loop names the environments: replace `dev prd` with the environments in `config/platform.yaml`, lowest tier first.
+
 (Run `dev` first for each stack: prd refuses a release that has not passed in dev. The loops
 above do exactly that.) The domain list is the keys of `config/domains.yaml`. In GitHub the same
 is `gh workflow run deploy.yml -f stack=20-identity -f environment=dev -f scope=env -f ref=$REL`,
@@ -516,6 +516,8 @@ python3 scripts/check.py 20-identity --scope shared
 python3 scripts/check.py 20-identity --scope env --env prd
 python3 scripts/check.py 25-access --scope access --env prd
 ```
+
+> **Replay:** Shown for `prd` only. Repeat the same commands for every other environment in `config/platform.yaml`, lowest tier first.
 Stack 20 checks: every expected Entra group of that scope exists, and the service
 principals that trust GitHub have their OIDC credentials. Stack 25 checks that every
 membership and approval in `config/entitlements/<env>/` was applied. Who is *in* a group
@@ -523,7 +525,7 @@ is a stack 25 matter; stack 20 does not check it.
 
 ### 4c. Claim the Databricks account (MANUAL, once)
 
-If you kept your Databricks account (Phase 0), steps 1 to 3 are already done for
+If you already have a Databricks account, steps 1 to 3 are already done for
 `sp-piq-terraform`; still do step 3 for the two new per-environment identities.
 
 1. Open `https://accounts.azuredatabricks.net` and sign in as the Global
@@ -560,6 +562,8 @@ for env in dev prd; do
 done
 ```
 
+> **Replay:** The loop names the environments: replace `dev prd` with the environments in `config/platform.yaml`, lowest tier first.
+
 Stack 30 finds groups, service principals and users **by name in Entra** (stack 20 and
 25 ran first), then resolves them into the Databricks account.
 
@@ -573,6 +577,8 @@ automatically. (How long AIM takes in practice has not been measured.)
 python3 scripts/check.py 30-account --scope env --env prd
 python3 scripts/check.py 30-account --scope domain:claims --env prd
 ```
+
+> **Replay:** Shown for `prd` only. Repeat the same commands for every other environment in `config/platform.yaml`, lowest tier first. `claims` stands for any domain: repeat for every domain in `config/domains.yaml`.
 Checks: the usage policies of that scope exist, and the groups it assigns to the
 environment's workspace are really assigned.
 
@@ -588,7 +594,7 @@ exactly what CI does, or apply a target without using your own credentials.
 
 **When this is possible:** only after Phase 4c step 3 (the identity is an account admin) and
 after stack 20 `shared` has run (it adds each identity to `piq-metastore-admins`). Before
-that, the identity lacks the Unity Catalog rights later stacks need. For the first build,
+that, the identity lacks the Unity Catalog rights later stacks need. On a first deploy,
 your own `az login` (Owner on the subscription, account admin) is simpler.
 
 The identities were created with OIDC only, with no client secret. To log in locally you
@@ -663,6 +669,8 @@ for env in dev prd; do
 done
 ```
 
+> **Replay:** The loop names the environments: replace `dev prd` with the environments in `config/platform.yaml`, lowest tier first.
+
 `shared` calls Databricks through the first nonprod environment's workspace (here `dev`)
 because the tag API is workspace-scoped, so the dev workspace must exist and stay.
 
@@ -675,6 +683,8 @@ because each target owns only its slice. Review each plan before confirming.
 ```bash
 python3 scripts/check.py 40-unity-catalog --scope domain:claims --env prd
 ```
+
+> **Replay:** Shown for `prd` only. Repeat the same commands for every other environment in `config/platform.yaml`, lowest tier first. `claims` stands for any domain: repeat for every domain in `config/domains.yaml`.
 Checks that the catalogs of that scope exist and that the producer group has USE_CATALOG
 on the domain catalog. (`prd_claims_anon` is created by the claims domain scope in prd.)
 
@@ -703,6 +713,8 @@ for env in dev prd; do
 done
 ```
 
+> **Replay:** The loop names the environments: replace `dev prd` with the environments in `config/platform.yaml`, lowest tier first.
+
 The `env` run of `50-workspace` holds the workspace settings, compute policies and the
 environment's own warehouses (`piq-vault-load`, `piq-shared`, and `piq-exec-reporting-bi`
 in prd). Each `domain:*` run holds that domain's `piq-<domain>-transform` warehouse. The
@@ -718,6 +730,8 @@ in prd). Each `domain:*` run holds that domain's `piq-<domain>-transform` wareho
 python3 scripts/check.py 50-workspace --scope env --env prd
 python3 scripts/check.py 50-workspace --scope domain:claims --env dev
 ```
+
+> **Replay:** This block names `dev` and `prd`, the two environments in `config/platform.yaml` today. Use your own environment names, and repeat the commands once for each environment, lowest tier first. `claims` stands for any domain: repeat for every domain in `config/domains.yaml`.
 Checks that the warehouses of that scope exist, and (prod `env` run) that the monitoring
 group has USE_CATALOG on the system catalog.
 
@@ -742,6 +756,8 @@ done
 python3 scripts/apply.py 70-observability --scope env --env prd --release $REL    # prod environment only
 ```
 
+> **Replay:** The loop names the environments: replace `dev prd` with the environments in `config/platform.yaml`, lowest tier first.
+
 Stack 70 refuses any environment but the prod one: system tables are account-wide, so
 one set of views in `prd_platform` covers everything.
 
@@ -760,6 +776,8 @@ python3 scripts/status.py            # the latest successful deploy of every tar
 python3 scripts/plan_all.py --env dev
 python3 scripts/plan_all.py --env prd
 ```
+
+> **Replay:** This block names `dev` and `prd`, the two environments in `config/platform.yaml` today. Use your own environment names, and repeat the commands once for each environment, lowest tier first.
 
 `status.py` should show `$REL` against every dev and prd target. `plan_all.py` plans every
 target of an environment without applying anything; right after a clean build every row
@@ -791,7 +809,7 @@ Run `sql/labs/lab06_masking_test.sql` (dev) and `sql/labs/lab11_products.sql` (p
    names its `env`). It edits `config/entitlements/<env>/` through a pull request.
 2. Turn on branch protection: require PR reviews and Code Owner review on `main`.
    `.github/CODEOWNERS` already asks for stricter review of `config/entitlements/prd/`.
-3. Practise each procedure in [OPERATIONS.md](OPERATIONS.md) once: deploy a domain to dev
+3. Practise teardown on a small environment ([TEARDOWN.md](TEARDOWN.md)), and each procedure in [OPERATIONS.md](OPERATIONS.md) once: deploy a domain to dev
    then prd, cut a release, promote it, roll a shared-rule change out to every domain.
 4. After a week, review `prd_platform.monitoring.cost_untagged_usage` and the
    serverless egress denial logs, then set prd `enforcement_mode: ENFORCED`.

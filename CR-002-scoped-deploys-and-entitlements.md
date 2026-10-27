@@ -5,7 +5,7 @@
 | Repository | `anilvenugopal/piq-databricks-platform` |
 | Author | Anil Venugopal |
 | Date | 23 October 2026 |
-| Status | Implemented on branch `refactor/scoped-deploys`; checked by tests that need no cloud access; **not yet applied to real cloud** |
+| Status | Implemented; checked by tests that need no cloud access; **not yet applied to real cloud** |
 | Builds on | CR-001 (federated domains and CI/CD) |
 
 ---
@@ -37,47 +37,7 @@
 
 ---
 
-## 3. Before you start: move from the old build
-
-This platform has no real data and no real users. Terraform state keys change (`<stack>.tfstate` becomes `<stack>/<env>/<scope>.tfstate`), and Terraform cannot split an old state by itself. So the old build is handled in three parts. The full checklist is RUNBOOK Phase 0.
-
-| Part | What | How |
-|---|---|---|
-| **Stays** | The Databricks account, `bootstrap/`, the state storage account `rg-piq-tfstate`, and everything stack 10 built (resource groups, networks, workspaces, storage, Key Vaults) | Nothing about these changed, so nothing is recreated. No Key Vault purge. |
-| **Goes** | Everything stacks 20 to 70 created: Entra groups and service principals, Databricks and Unity Catalog objects, budgets | Destroyed with the **old** code on `main`, stacks 70 down to 20. They hold no data and rebuild in minutes. |
-| **Moves** | Stack 10's one state (both environments) | `scripts/migrate_foundation_state.py` moves each resource with `terraform state mv` into `10-foundation/<env>/env.tfstate`; the real resources are untouched. Its mechanics are tested offline (`tests/migration/run_tests.py`); pushing to the real backend is not. |
-
-### 3.1 Destroy stacks 70 to 20 with the old code
-
-```bash
-git switch main
-for s in 70-observability 60-governance 55-ai-platform 50-workspace 40-unity-catalog 30-account 20-identity; do
-  ./scripts/tf.sh $s init -input=false && ./scripts/tf.sh $s destroy
-done
-```
-
-Read each destroy plan before you accept it. Do not destroy stack 10 or `bootstrap/`.
-
-### 3.2 Things that catch people out
-
-| Item | What happens | What to do |
-|---|---|---|
-| Resource groups | The old stack 10 created `rg-piq-<env>`; bootstrap now creates them. They already exist | Import them into bootstrap before its first apply (the migration script prints the commands). Without the import, bootstrap fails with "already exists" |
-| Entra groups and service principals | Recreated with new object IDs | Refresh every GitHub variable that held an ID |
-| Old state files | `<stack>.tfstate` blobs stay in the `tfstate` container | Delete them once the new states plan clean (RUNBOOK Phase 0 step 5) |
-| Metastore | It lives at account level and survives, attached to the existing workspaces | Its admin group `piq-metastore-admins` was destroyed; set the new one as metastore admin again (RUNBOOK Phase 4c) |
-| Clean slate instead | Destroying stack 10 too recreates workspaces and storage | Then Key Vault names stay reserved (prd has purge protection, 90 days): change `unique_suffix` in `config/platform.yaml`. Skip the state migration |
-
-### 3.3 Rebuild order
-
-1. On the new code, split stack 10's state (`scripts/migrate_foundation_state.py --execute`).
-2. Import the resource groups into `bootstrap/`, then apply it. It creates the per-environment identities.
-3. Create the GitHub environments and variables printed by `terraform output next_steps` and `github_variables`.
-4. Deploy in the order of section 8.
-
----
-
-## 4. Decisions resolved
+## 3. Decisions resolved
 
 | ID | Decision | Resolution |
 |---|---|---|
@@ -89,7 +49,7 @@ Read each destroy plan before you accept it. Do not destroy stack 10 or `bootstr
 
 ---
 
-## 5. Changes
+## 4. Changes
 
 ### C-1. Environment tiers and the promotion graph
 
@@ -262,7 +222,7 @@ The promotion gate: an environment with `promotes_from` accepts only a release t
 
 ---
 
-## 6. What has and has not been verified
+## 5. What has and has not been verified
 
 | Verified (no cloud) | Not verified |
 |---|---|
@@ -272,14 +232,14 @@ The promotion gate: an environment with `promotes_from` accepts only a release t
 | Mocked plan of every stack and target; counts match the old plan | Deploy records in blob storage (`BlobStore`) |
 | `terraform validate` of every stack and `bootstrap/` | The `plan_all.py`, `status.py` and `deploy.yml` paths end to end |
 
-## 7. Not in scope
+## 6. Not in scope
 
 - Domain repositories running their own deploys (CR-001 sections 4 and 5, `templates/domain-bundle`).
 - Choosing or integrating an IAM product. Only the seam is built.
 - A per-environment Azure subscription.
 - Separate state containers per environment, and Entra administrative units.
 
-## 8. Implementation and deploy order
+## 7. Implementation and deploy order
 
 Implementation order was C-1, C-2, C-6/C-7/C-8 (config and naming), tests, stacks, wrappers, pipelines, bootstrap, documentation.
 
@@ -297,7 +257,7 @@ Deploy order for each environment (a `domain` step repeats for every domain):
 
 Adding a domain: `10-foundation` env (new storage container) → `20-identity` domain:new → `30-account` domain:new → `30-account` env → `40-unity-catalog` env (vault grants) → `40-unity-catalog` domain:new → `50`, `55`, `60` domain:new → `25-access`.
 
-## 9. Overall acceptance
+## 8. Overall acceptance
 
 - `make test`, `make plan-test`, `terraform fmt -recursive -check` and `terraform validate` pass with no cloud access.
 - After the rebuild: planning `domain:claims` after editing only `config/products/policy_financial.yaml` shows no changes; planning `domain:policy_financial` shows only that change.
