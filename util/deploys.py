@@ -74,13 +74,18 @@ class BlobStore:
             raise RuntimeError(f"could not read deploy records (is `az login` current and does it reach {self.account}?): {r.stderr.strip()}")
         out = []
         for name in sorted(json.loads(r.stdout or "[]")):
-            d = self._az("storage", "blob", "download", "--container-name", CONTAINER, "--name", name, "--file", "/dev/stdout", "--no-progress")
-            if d.returncode:
-                raise RuntimeError(f"could not read deploy record {name}: {d.stderr.strip()}")
-            try:
-                out.append(json.loads(d.stdout))
-            except json.JSONDecodeError:
-                continue
+            # The Azure CLI downloads into a seekable file; it cannot write to a stream such as /dev/stdout.
+            with tempfile.TemporaryDirectory() as tmp:
+                target = os.path.join(tmp, "record.json")
+                d = self._az("storage", "blob", "download", "--container-name", CONTAINER, "--name", name,
+                             "--file", target, "--no-progress")
+                if d.returncode:
+                    raise RuntimeError(f"could not read deploy record {name}: {d.stderr.strip()}")
+                try:
+                    with open(target) as fh:
+                        out.append(json.load(fh))
+                except (OSError, json.JSONDecodeError):
+                    continue
         return out
 
 

@@ -160,6 +160,46 @@ check("qa accepts the release once both ran it", deploys.check_promotion(st, qa,
 
 
 # ---------------------------------------------------------------------------
+print("reading deploy records from Azure storage (fake az)")
+import json  # noqa: E402
+
+
+class FakeAz(deploys.BlobStore):
+    """Behaves like the az CLI where it matters: a download needs a real, seekable file, never a stream."""
+
+    def __init__(self):
+        super().__init__("fakeaccount")
+        self.blobs = {}
+
+    def _az(self, *args):
+        a = list(args)
+        if a[:3] == ["storage", "container", "create"]:
+            return subprocess.CompletedProcess(a, 0, "", "")
+        if a[:3] == ["storage", "blob", "upload"]:
+            self.blobs[a[a.index("--name") + 1]] = pathlib.Path(a[a.index("--file") + 1]).read_text()
+            return subprocess.CompletedProcess(a, 0, "", "")
+        if a[:3] == ["storage", "blob", "list"]:
+            prefix = a[a.index("--prefix") + 1]
+            return subprocess.CompletedProcess(a, 0, json.dumps([n for n in self.blobs if n.startswith(prefix)]), "")
+        if a[:3] == ["storage", "blob", "download"]:
+            target = a[a.index("--file") + 1]
+            if target.startswith("/dev/"):
+                return subprocess.CompletedProcess(a, 1, "", "ValueError: Target stream handle must be seekable.")
+            pathlib.Path(target).write_text(self.blobs[a[a.index("--name") + 1]])
+            return subprocess.CompletedProcess(a, 0, "", "")
+        raise AssertionError(f"unexpected az call: {a}")
+
+
+fake = FakeAz()
+rec_target = Target("40-unity-catalog", "dev", "domain:claims")
+fake.put(deploys.record(rec_target, REL, "a" * 40, "PASS"))
+got = fake.list(rec_target.stack, "dev", rec_target.scope)
+check("a deploy record written to blob storage can be read back", len(got) == 1 and got[0]["release"] == REL, str(got))
+check("the promotion gate works on records read from blob storage",
+      deploys.check_promotion(fake, Target("40-unity-catalog", "prd", "domain:claims"), REL, env_cfg) == [])
+
+
+# ---------------------------------------------------------------------------
 print("releases")
 check("release tags are recognised", release.is_release_tag("rel-2026.10.23.1") and not release.is_release_tag("v1.0") and not release.is_release_tag("rel-2026.10.23"))
 check("next tag has the expected shape", release.is_release_tag(release.next_tag()))
