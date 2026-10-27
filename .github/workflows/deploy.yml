@@ -59,7 +59,33 @@ env:
   GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
+  # Fails fast on a mistyped stack, environment or scope. It has no `environment:`, so a typo cannot
+  # create a stray GitHub environment, and it needs no cloud login.
+  check-input:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref }}" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - name: Check stack, environment and scope against config
+        run: |
+          python3 - <<'PY'
+          import os, sys, yaml
+          from util.scope import check_target
+          envs = list(yaml.safe_load(open("config/platform.yaml"))["environments"])
+          domains = list(yaml.safe_load(open("config/domains.yaml"))["domains"] or {})
+          problems = check_target(os.environ["STACK"], os.environ["TARGET_ENV"] or None,
+                                  os.environ["TARGET_SCOPE"], envs, domains)
+          if problems:
+              print("\n".join(f"ERROR: {p}" for p in problems), file=sys.stderr)
+              sys.exit(1)
+          print("stack, environment and scope are valid")
+          PY
+
   plan:
+    needs: check-input
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment || 'shared' }}-plan
     steps:
